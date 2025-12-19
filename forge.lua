@@ -1,5 +1,5 @@
 local code = {}
 code = {
-  "FORG!"
+  "HEART"
 }
 return code

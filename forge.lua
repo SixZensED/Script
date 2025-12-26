@@ -1,5 +1,6 @@
 local code = {}
 code = {
-  "HEART"
+  "XMAS!",
+  "SORRYFORDELAY",
 }
 return code

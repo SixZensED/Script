@@ -6,5 +6,6 @@ code = {
   "FORGE2M",
   "HAPPYNEWYEAR",
   "RAVEN",
+  "FORGWEEKEND!",
 }
 return code

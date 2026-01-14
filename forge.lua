@@ -7,5 +7,6 @@ code = {
   "HAPPYNEWYEAR",
   "RAVEN",
   "FORGWEEKEND!",
+  "MAZE",
 }
 return code

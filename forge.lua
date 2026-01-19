@@ -8,5 +8,6 @@ code = {
   "RAVEN",
   "FORGWEEKEND!",
   "MAZE",
+  "QOL!",
 }
 return code

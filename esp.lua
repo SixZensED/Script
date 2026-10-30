@@ -203,6 +203,24 @@ local function getbodybox(camera,model,humanoid)
     end
     return Vector2.new(b.minx-2,b.miny-2),Vector2.new(width+4,height+4)
 end
+local function getcustombox(camera, target, model, root, head)
+    local custompos, customsize=call("get_box",target,model,camera)
+    if typeof(custompos)=="Vector2" and typeof(customsize)=="Vector2" then
+        return custompos,customsize
+    end
+    if esp.custom.box_mode~="Root" then return nil end
+    local origin=root.Position
+    local top=head and head:IsA("BasePart") and head.Position+Vector3.new(0,head.Size.Y*0.65,0) or origin+Vector3.new(0,2.6,0)
+    local bottom=origin-Vector3.new(0,3,0)
+    local top2d=project(camera,top)
+    local bottom2d=project(camera,bottom)
+    if not top2d or not bottom2d then return nil end
+    local height=math.abs(bottom2d.Y-top2d.Y)
+    if height<2 then return nil end
+    local width=height*0.48
+    local middle=(top2d.X+bottom2d.X)*0.5
+    return Vector2.new(middle-width*0.5,math.min(top2d.Y,bottom2d.Y)),Vector2.new(width,height)
+end
 local function drawbone(bone,a,b,color,glow)
     if not a or not b then bone.glow.Visible=false bone.core.Visible=false return end
     bone.glow.From=a bone.glow.To=b bone.core.From=a bone.core.To=b
@@ -227,7 +245,8 @@ local function update(target,o,camera,localroot)
     local head=model:FindFirstChild("Head")
     local head2d
     if head and head:IsA("BasePart") then head2d=project(camera,head.Position+Vector3.new(0,head.Size.Y*0.7+0.12,0)) end
-    local pos,size=getbodybox(camera,model,humanoid)
+    local pos,size=getcustombox(camera,target,model,root,head)
+    if not pos then pos,size=getbodybox(camera,model,humanoid) end
     if not pos then hide(o) return end
     if o.model~=model then o.model=model o.highlight.Adornee=model end
     local methods=esp.methods

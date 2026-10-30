@@ -66,8 +66,14 @@ local esp = {
     tracertarget = "Root",
     offset = Vector2.new(0, 0),
     projectionmode = "Viewport",
-    autoscale = false,
-    scale = Vector2.new(0.8, 0.8),
+    autoscale = true,
+    scale = Vector2.new(1, 1),
+    drawing = {
+        scale = Vector2.new(1, 1),
+        offset = Vector2.zero,
+        autoscale = true,
+        multiplier = Vector2.new(1, 1)
+    },
     methods = {
         Glow = true, Box = true, Skeleton = true,
         Trace = true, Name = true, Health = true, Distance = true
@@ -92,12 +98,18 @@ local baselineRatio
 local currentRatio
 local function refreshProjection(camera)
     drawingSize = camera.ViewportSize
-    projectionScale = esp.scale
-    projectionOrigin = Vector2.zero
     local screenSize = frame.AbsoluteSize
+    currentRatio = Vector2.new(1, 1)
     if drawingSize.X > 0 and drawingSize.Y > 0 and screenSize.X > 0 and screenSize.Y > 0 then
         currentRatio = Vector2.new(screenSize.X / drawingSize.X, screenSize.Y / drawingSize.Y)
     end
+    local config = esp.drawing
+    local ratio = config.autoscale and currentRatio or Vector2.new(1, 1)
+    projectionScale = Vector2.new(ratio.X * config.multiplier.X, ratio.Y * config.multiplier.Y)
+    config.scale = projectionScale
+    config.offset = esp.offset
+    esp.scale = projectionScale
+    esp.autoscale = config.autoscale
 end
 
 local cache = {}
@@ -217,7 +229,7 @@ end
 local function project(camera, world)
     local point, visible = camera:WorldToViewportPoint(world)
     if point.Z <= 0 then return nil, false end
-    local pos = Vector2.new(point.X * projectionScale.X, point.Y * projectionScale.Y) + esp.offset
+    local pos = Vector2.new(point.X * esp.drawing.scale.X, point.Y * esp.drawing.scale.Y) + esp.drawing.offset
     return pos, visible
 end
 
@@ -502,7 +514,10 @@ function esp:set_maxdistance(value)
 end
 
 function esp:set_offset(value)
-    if typeof(value) == "Vector2" then self.offset = value end
+    if typeof(value) == "Vector2" then
+        self.offset = value
+        self.drawing.offset = value
+    end
 end
 
 function esp:set_projection_mode(value)
@@ -510,12 +525,13 @@ function esp:set_projection_mode(value)
 end
 
 function esp:set_auto_scale(value)
-    self.autoscale = false
+    self.drawing.autoscale = value == true
+    self.autoscale = self.drawing.autoscale
 end
 
 function esp:set_projection_scale(value)
     if typeof(value) == "Vector2" and value.X > 0 and value.Y > 0 then
-        self.scale = value
+        self.drawing.multiplier = value
     end
 end
 
@@ -523,8 +539,8 @@ function esp:get_projection_info()
     local camera = workspace.CurrentCamera
     return {
         cameraViewport = camera and camera.ViewportSize,
-        mode = "Viewport (fixed drawing DPI)",
-        scale = self.scale,
+        mode = "Viewport (dynamic GUI ratio)",
+        scale = self.drawing.multiplier,
         effectiveScale = projectionScale,
         guiSize = frame.AbsoluteSize,
         guiToViewportRatio = currentRatio,
@@ -537,9 +553,14 @@ end
 
 function esp:clear_calibration()
     self._samples = {}
-    self.scale = Vector2.new(0.8, 0.8)
-    baselineRatio = nil
+    self.drawing.multiplier = Vector2.new(1, 1)
+    self.drawing.autoscale = true
+    self.drawing.scale = Vector2.new(1, 1)
+    self.drawing.offset = Vector2.zero
     self.offset = Vector2.zero
+    self.autoscale = true
+    self.scale = Vector2.new(1, 1)
+    baselineRatio = nil
     projectionScale = self.scale
 end
 
@@ -577,7 +598,7 @@ function esp:refresh()
     recoverygeneration += 1
     baselineRatio = nil
     currentRatio = nil
-    projectionScale = self.scale
+    projectionScale = self.drawing.scale
     projectionOrigin = Vector2.zero
     lastcamera = nil
     lastviewport = nil

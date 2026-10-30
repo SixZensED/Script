@@ -1,4 +1,4 @@
--- Sixly ESP | Drawing API | DPI-aware viewport projection
+-- Sixly ESP | Drawing API | Raw Viewport projection (V4)
 -- The bounding box uses ONLY real R6/R15 body parts, never Model:GetBoundingBox().
 -- Drawing coordinates, tracer endpoint, labels and skeleton share one projection.
 
@@ -69,7 +69,7 @@ local esp = {
     tracertarget = "Root", -- Root, Head or Feet
     offset = Vector2.new(0, 0), -- optional executor-specific correction
     projectionmode = "Viewport", -- Viewport or Screen
-    autoscale = true, -- match camera projection to actual Drawing canvas
+    autoscale = false, -- kept for API compatibility; no GUI-based autoscaling
     scale = Vector2.new(1, 1), -- optional fine tuning multiplier
     methods = {
         Glow = true, Box = true, Skeleton = true,
@@ -77,44 +77,22 @@ local esp = {
     }
 }
 
--- A fullscreen, invisible GUI gives the actual 2D client-area size. Camera.ViewportSize
--- can differ from the executor Drawing surface on windowed / DPI-scaled clients.
-local probe = Instance.new("ScreenGui")
-probe.Name = "sixly_esp_viewport_probe"
-probe.ResetOnSpawn = false
-probe.IgnoreGuiInset = true
-probe.DisplayOrder = -100
-pcall(function() probe.ScreenInsets = Enum.ScreenInsets.None end)
-probe.Parent = playergui
-local surface = Instance.new("Frame")
-surface.Name = "Surface"
-surface.BackgroundTransparency = 1
-surface.BorderSizePixel = 0
-surface.Size = UDim2.fromScale(1, 1)
-surface.Parent = probe
-
-local drawingSize = Vector2.new(0, 0)
+-- Drawing API uses viewport pixel coordinates. Do NOT multiply them by a
+-- ScreenGui.AbsoluteSize/Camera.ViewportSize ratio: that caused V3's drift.
+local drawingSize = Vector2.zero
 local projectionScale = Vector2.new(1, 1)
-local projectionOrigin = Vector2.new(0, 0)
+local projectionOrigin = Vector2.zero
 local function refreshProjection(camera)
-    local viewport = camera.ViewportSize
-    -- Camera uses viewport coordinates; Drawing overlays use client pixel coordinates.
-    local measured = surface.AbsoluteSize
-    drawingSize = measured.X > 0 and measured.Y > 0 and measured or viewport
-    local sx, sy = 1, 1
-    if esp.autoscale and viewport.X > 0 and viewport.Y > 0 then
-        sx, sy = drawingSize.X / viewport.X, drawingSize.Y / viewport.Y
-    end
-    projectionScale = Vector2.new(sx * esp.scale.X, sy * esp.scale.Y)
-    projectionOrigin = (esp.projectionmode == "Screen")
-        and Vector2.new(0, 0) or Vector2.new(0, 0)
+    drawingSize = camera.ViewportSize
+    projectionScale = esp.scale
+    projectionOrigin = Vector2.zero
 end
 
 local cache = {}
 local connections = {}
 local watched = {}
 local closed = false
-local rendername = "sixly_drawing_esp_v5"
+local rendername = "sixly_drawing_esp_v4_rawviewport"
 
 local highlights = Instance.new("Folder")
 highlights.Name = "sixly_drawing_highlights"
@@ -226,8 +204,7 @@ local function project(camera, world)
     -- transform to every drawing element (boxes, names, health, skeleton, tracer).
     local point, visible = camera:WorldToViewportPoint(world)
     if point.Z <= 0 then return nil, false end
-    local pos = Vector2.new(point.X * projectionScale.X,
-        point.Y * projectionScale.Y) + projectionOrigin + esp.offset
+    local pos = Vector2.new(point.X, point.Y) * projectionScale + esp.offset
     return pos, visible
 end
 
@@ -401,9 +378,9 @@ local function update(target, objects, camera, localroot)
     objects.traceglow.Visible = showtrace
     if showtrace then
         local from = Vector2.new(
-            drawingSize.X * 0.5 * esp.scale.X,
-            (esp.tracerorigin == "Bottom" and drawingSize.Y or 0) * esp.scale.Y
-        ) + projectionOrigin + esp.offset
+            drawingSize.X * 0.5,
+            esp.tracerorigin == "Bottom" and drawingSize.Y or 0
+        ) * projectionScale + esp.offset
         local to = root2d
         if esp.tracertarget == "Head" then
             to = head2d or root2d
@@ -516,12 +493,13 @@ function esp:set_offset(value)
 end
 
 function esp:set_projection_mode(value)
-    -- Kept for compatibility. All visual elements share ViewportPoint projection.
-    self.projectionmode = value == "Screen" and "Screen" or "Viewport"
+    -- Kept for compatibility. WorldToViewportPoint is the Drawing coordinate basis.
+    self.projectionmode = "Viewport"
 end
 
 function esp:set_auto_scale(value)
-    self.autoscale = value == true
+    -- Disabled intentionally: ScreenGui pixel size is not Drawing canvas size.
+    self.autoscale = false
 end
 
 function esp:set_projection_scale(value)
@@ -535,6 +513,7 @@ function esp:get_projection_info()
     return {
         cameraViewport = camera and camera.ViewportSize,
         drawingSurface = drawingSize,
+        mode = "RawViewport",
         scale = projectionScale,
         offset = self.offset
     }
@@ -572,7 +551,6 @@ function esp:destroy()
     for _, connection in connections do connection:Disconnect() end
     for target in cache do remove(target) end
     highlights:Destroy()
-    probe:Destroy()
     if env.sixly_esp_drawing == self then env.sixly_esp_drawing = nil end
 end
 

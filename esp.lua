@@ -1,4 +1,4 @@
--- Sixly ESP V5 | Drawing API | Screen Projection + Click Calibration
+-- v1
 
 local players = game:GetService("Players")
 local runservice = game:GetService("RunService")
@@ -66,9 +66,9 @@ local esp = {
     tracerorigin = "Top",
     tracertarget = "Root",
     offset = Vector2.new(0, 0),
-    projectionmode = "Screen",
+    projectionmode = "Viewport",
     autoscale = false,
-    scale = Vector2.new(1, 1),
+    scale = Vector2.new(0.8, 0.8),
     methods = {
         Glow = true, Box = true, Skeleton = true,
         Trace = true, Name = true, Health = true, Distance = true
@@ -88,7 +88,7 @@ local cache = {}
 local connections = {}
 local watched = {}
 local closed = false
-local rendername = "sixly_drawing_esp_v5_calibrated"
+local rendername = "sixly_drawing_esp_v6_dpi"
 
 local highlights = Instance.new("Folder")
 highlights.Name = "sixly_drawing_highlights"
@@ -195,7 +195,7 @@ local function remove(target)
 end
 
 local function project(camera, world)
-    local point, visible = camera:WorldToScreenPoint(world)
+    local point, visible = camera:WorldToViewportPoint(world)
     if point.Z <= 0 then return nil, false end
     local pos = Vector2.new(point.X * projectionScale.X, point.Y * projectionScale.Y) + esp.offset
     return pos, visible
@@ -361,9 +361,8 @@ local function update(target, objects, camera, localroot)
     objects.trace.Visible = showtrace
     objects.traceglow.Visible = showtrace
     if showtrace then
-        local center = camera:WorldToScreenPoint(camera.CFrame.Position + camera.CFrame.LookVector * 50)
         local from = Vector2.new(
-            center.X * projectionScale.X + esp.offset.X,
+            drawingSize.X * 0.5 * projectionScale.X + esp.offset.X,
             esp.tracerorigin == "Bottom" and (drawingSize.Y * projectionScale.Y + esp.offset.Y) or esp.offset.Y
         )
         local to = root2d
@@ -477,7 +476,7 @@ function esp:set_offset(value)
 end
 
 function esp:set_projection_mode(value)
-    self.projectionmode = "Screen"
+    self.projectionmode = "Viewport"
 end
 
 function esp:set_auto_scale(value)
@@ -494,7 +493,7 @@ function esp:get_projection_info()
     local camera = workspace.CurrentCamera
     return {
         cameraViewport = camera and camera.ViewportSize,
-        mode = "Screen",
+        mode = "Viewport",
         scale = self.scale,
         offset = self.offset,
         calibrationSamples = #(self._samples or {})
@@ -503,7 +502,7 @@ end
 
 function esp:clear_calibration()
     self._samples = {}
-    self.scale = Vector2.new(1, 1)
+    self.scale = Vector2.new(0.8, 0.8)
     self.offset = Vector2.zero
 end
 
@@ -514,27 +513,24 @@ function esp:calibrate()
     end
     self._samples = {}
     local samples = self._samples
-    print("[Sixly ESP V5] Click 3-5 different visible character body locations, spread across the screen. Do not click the sky. Calibration ends after 5 clicks.")
     self._calibrationconnection = uis.InputBegan:Connect(function(input, processed)
         if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
         local part = mouse.Target
         if not part or not part:IsA("BasePart") or not part:FindFirstAncestorOfClass("Model") then
-            print("[Sixly ESP V5] Click a solid character body part")
             return
         end
         local model = part:FindFirstAncestorOfClass("Model")
         if not model:FindFirstChildOfClass("Humanoid") then
-            print("[Sixly ESP V5] Target must be a Humanoid character")
             return
         end
         local camera = workspace.CurrentCamera
         if not camera then return end
         local hit = mouse.Hit.Position
-        local projected = camera:WorldToScreenPoint(hit)
+        local projected = camera:WorldToViewportPoint(hit)
         if projected.Z <= 0 then return end
         local cursor = uis:GetMouseLocation()
         samples[#samples + 1] = {x = projected.X, y = projected.Y, mx = cursor.X, my = cursor.Y}
-        print(string.format("[Sixly ESP V5] calibration sample %d/5", #samples))
+        print(string.format("[Sixly ESP V6] calibration sample %d/5", #samples))
         if #samples < 5 then return end
         local function fit(a, b)
             local n, sx, sy, sxx, sxy = #samples, 0, 0, 0, 0
@@ -556,9 +552,6 @@ function esp:calibrate()
         if scalex > 0.5 and scalex < 2 and scaley > 0.5 and scaley < 2 then
             self.scale = Vector2.new(scalex, scaley)
             self.offset = Vector2.new(offsetx, offsety)
-            print("[Sixly ESP V5] calibrated", self.scale, self.offset)
-        else
-            warn("[Sixly ESP V5] Invalid calibration samples; spread clicks across both axes and retry")
         end
         self._calibrationconnection:Disconnect()
         self._calibrationconnection = nil

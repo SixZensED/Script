@@ -1,25 +1,23 @@
--- Sixly ESP | Drawing API | Raw Viewport projection (V4)
--- The bounding box uses ONLY real R6/R15 body parts, never Model:GetBoundingBox().
--- Drawing coordinates, tracer endpoint, labels and skeleton share one projection.
+-- Sixly ESP V5 | Drawing API | Screen Projection + Click Calibration
 
 local players = game:GetService("Players")
 local runservice = game:GetService("RunService")
+local uis = game:GetService("UserInputService")
 local localplayer = players.LocalPlayer
 local playergui = localplayer:WaitForChild("PlayerGui")
+local mouse = localplayer:GetMouse()
 local env = (getgenv and getgenv()) or _G
 
 if not Drawing or type(Drawing.new) ~= "function" then
     error("sixly esp: this executor does not support Drawing.new")
 end
 
--- Remove earlier Drawing ESP instance, so old lines/text do not overlap.
 if env.sixly_esp_drawing and type(env.sixly_esp_drawing.destroy) == "function" then
     pcall(function()
         env.sixly_esp_drawing:destroy()
     end)
 end
 
--- Remove the old ScreenGui edition too. Its Destroying handler unbinds its renderer.
 local oldgui = playergui:FindFirstChild("sixly_esp")
 if oldgui then oldgui:Destroy() end
 
@@ -64,21 +62,19 @@ local r15bones = {
 local esp = {
     enabled = true,
     teamcheck = false,
-    maxdistance = 1200, -- studs, 0 means unlimited
-    tracerorigin = "Top", -- Top or Bottom
-    tracertarget = "Root", -- Root, Head or Feet
-    offset = Vector2.new(0, 0), -- optional executor-specific correction
-    projectionmode = "Viewport", -- Viewport or Screen
-    autoscale = false, -- kept for API compatibility; no GUI-based autoscaling
-    scale = Vector2.new(1, 1), -- optional fine tuning multiplier
+    maxdistance = 1200,
+    tracerorigin = "Top",
+    tracertarget = "Root",
+    offset = Vector2.new(0, 0),
+    projectionmode = "Screen",
+    autoscale = false,
+    scale = Vector2.new(1, 1),
     methods = {
         Glow = true, Box = true, Skeleton = true,
         Trace = true, Name = true, Health = true, Distance = true
     }
 }
 
--- Drawing API uses viewport pixel coordinates. Do NOT multiply them by a
--- ScreenGui.AbsoluteSize/Camera.ViewportSize ratio: that caused V3's drift.
 local drawingSize = Vector2.zero
 local projectionScale = Vector2.new(1, 1)
 local projectionOrigin = Vector2.zero
@@ -92,7 +88,7 @@ local cache = {}
 local connections = {}
 local watched = {}
 local closed = false
-local rendername = "sixly_drawing_esp_v4_rawviewport"
+local rendername = "sixly_drawing_esp_v5_calibrated"
 
 local highlights = Instance.new("Folder")
 highlights.Name = "sixly_drawing_highlights"
@@ -198,18 +194,13 @@ local function remove(target)
     end
 end
 
--- IMPORTANT: everything uses the same coordinate space.
 local function project(camera, world)
-    -- Always calculate in one space and then apply exactly the same affine
-    -- transform to every drawing element (boxes, names, health, skeleton, tracer).
-    local point, visible = camera:WorldToViewportPoint(world)
+    local point, visible = camera:WorldToScreenPoint(world)
     if point.Z <= 0 then return nil, false end
-    local pos = Vector2.new(point.X, point.Y) * projectionScale + esp.offset
+    local pos = Vector2.new(point.X * projectionScale.X, point.Y * projectionScale.Y) + esp.offset
     return pos, visible
 end
 
--- Project the 8 corners of only a REAL body part (not hats, tools, hitboxes, etc).
--- If the part is partially behind the camera, skip it rather than making a huge box.
 local function extendpart(camera, part, bounds)
     local cf = part.CFrame
     local half = part.Size * 0.5
@@ -252,7 +243,6 @@ local function getbodybox(camera, model, humanoid)
         end
     end
 
-    -- Minimal fallback for custom NPC rigs that do not use conventional names.
     if count < 2 then
         bounds.minx, bounds.miny = math.huge, math.huge
         bounds.maxx, bounds.maxy = -math.huge, -math.huge
@@ -274,8 +264,6 @@ local function getbodybox(camera, model, humanoid)
     local height = bounds.maxy - bounds.miny
     if width < 1 or height < 2 then return nil end
 
-    -- An exaggerated body part should not stretch labels across the whole screen.
-    -- All anchors still come directly from the head/root, never this box.
     if width > height * 1.8 then
         local mid = (bounds.minx + bounds.maxx) * 0.5
         width = height * 1.8
@@ -330,18 +318,15 @@ local function update(target, objects, camera, localroot)
         return
     end
 
-    -- Anchor 1: 3D root position -> 2D point for tracer.
     local root2d, rootvisible = project(camera, root.Position)
     if not root2d or not rootvisible then hide(objects) return end
 
-    -- Anchor 2: real head position -> 2D point for name.
     local head = model:FindFirstChild("Head")
     local head2d
     if head and head:IsA("BasePart") then
         head2d = project(camera, head.Position + Vector3.new(0, head.Size.Y * 0.7 + 0.12, 0))
     end
 
-    -- Box contains R6/R15 body parts ONLY, never accessories, tools or HRP.
     local pos, size = getbodybox(camera, model, humanoid)
     if not pos then hide(objects) return end
 
@@ -362,7 +347,6 @@ local function update(target, objects, camera, localroot)
     local boxbottom = pos.Y + size.Y
     local anchorx = head2d and head2d.X or root2d.X
 
-    -- Box tracks the body bounds; name/trace do NOT depend on its location.
     local showbox = methods.Box == true
     objects.box.Visible = showbox
     objects.boxglow.Visible = showbox
@@ -377,10 +361,11 @@ local function update(target, objects, camera, localroot)
     objects.trace.Visible = showtrace
     objects.traceglow.Visible = showtrace
     if showtrace then
+        local center = camera:WorldToScreenPoint(camera.CFrame.Position + camera.CFrame.LookVector * 50)
         local from = Vector2.new(
-            drawingSize.X * 0.5,
-            esp.tracerorigin == "Bottom" and drawingSize.Y or 0
-        ) * projectionScale + esp.offset
+            center.X * projectionScale.X + esp.offset.X,
+            esp.tracerorigin == "Bottom" and (drawingSize.Y * projectionScale.Y + esp.offset.Y) or esp.offset.Y
+        )
         local to = root2d
         if esp.tracertarget == "Head" then
             to = head2d or root2d
@@ -399,7 +384,6 @@ local function update(target, objects, camera, localroot)
         objects.name.Color = white
     end
 
-    -- Health below the FEET of the real rig, not the full model bounding box.
     local showhealth = methods.Health == true
     objects.healthback.Visible = showhealth
     objects.healthfill.Visible = showhealth
@@ -493,12 +477,10 @@ function esp:set_offset(value)
 end
 
 function esp:set_projection_mode(value)
-    -- Kept for compatibility. WorldToViewportPoint is the Drawing coordinate basis.
-    self.projectionmode = "Viewport"
+    self.projectionmode = "Screen"
 end
 
 function esp:set_auto_scale(value)
-    -- Disabled intentionally: ScreenGui pixel size is not Drawing canvas size.
     self.autoscale = false
 end
 
@@ -512,11 +494,75 @@ function esp:get_projection_info()
     local camera = workspace.CurrentCamera
     return {
         cameraViewport = camera and camera.ViewportSize,
-        drawingSurface = drawingSize,
-        mode = "RawViewport",
-        scale = projectionScale,
-        offset = self.offset
+        mode = "Screen",
+        scale = self.scale,
+        offset = self.offset,
+        calibrationSamples = #(self._samples or {})
     }
+end
+
+function esp:clear_calibration()
+    self._samples = {}
+    self.scale = Vector2.new(1, 1)
+    self.offset = Vector2.zero
+end
+
+function esp:calibrate()
+    if self._calibrationconnection then
+        self._calibrationconnection:Disconnect()
+        self._calibrationconnection = nil
+    end
+    self._samples = {}
+    local samples = self._samples
+    print("[Sixly ESP V5] Click 3-5 different visible character body locations, spread across the screen. Do not click the sky. Calibration ends after 5 clicks.")
+    self._calibrationconnection = uis.InputBegan:Connect(function(input, processed)
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        local part = mouse.Target
+        if not part or not part:IsA("BasePart") or not part:FindFirstAncestorOfClass("Model") then
+            print("[Sixly ESP V5] Click a solid character body part")
+            return
+        end
+        local model = part:FindFirstAncestorOfClass("Model")
+        if not model:FindFirstChildOfClass("Humanoid") then
+            print("[Sixly ESP V5] Target must be a Humanoid character")
+            return
+        end
+        local camera = workspace.CurrentCamera
+        if not camera then return end
+        local hit = mouse.Hit.Position
+        local projected = camera:WorldToScreenPoint(hit)
+        if projected.Z <= 0 then return end
+        local cursor = uis:GetMouseLocation()
+        samples[#samples + 1] = {x = projected.X, y = projected.Y, mx = cursor.X, my = cursor.Y}
+        print(string.format("[Sixly ESP V5] calibration sample %d/5", #samples))
+        if #samples < 5 then return end
+        local function fit(a, b)
+            local n, sx, sy, sxx, sxy = #samples, 0, 0, 0, 0
+            for _, sample in samples do
+                local x, y = sample[a], sample[b]
+                sx += x
+                sy += y
+                sxx += x * x
+                sxy += x * y
+            end
+            local denominator = n * sxx - sx * sx
+            if math.abs(denominator) < 100 then return 1, 0 end
+            local scale = (n * sxy - sx * sy) / denominator
+            local offset = (sy - scale * sx) / n
+            return scale, offset
+        end
+        local scalex, offsetx = fit("x", "mx")
+        local scaley, offsety = fit("y", "my")
+        if scalex > 0.5 and scalex < 2 and scaley > 0.5 and scaley < 2 then
+            self.scale = Vector2.new(scalex, scaley)
+            self.offset = Vector2.new(offsetx, offsety)
+            print("[Sixly ESP V5] calibrated", self.scale, self.offset)
+        else
+            warn("[Sixly ESP V5] Invalid calibration samples; spread clicks across both axes and retry")
+        end
+        self._calibrationconnection:Disconnect()
+        self._calibrationconnection = nil
+    end)
 end
 
 function esp:add_model(model)
@@ -546,6 +592,7 @@ end
 
 function esp:destroy()
     if closed then return end
+    if self._calibrationconnection then self._calibrationconnection:Disconnect() end
     closed = true
     runservice:UnbindFromRenderStep(rendername)
     for _, connection in connections do connection:Disconnect() end

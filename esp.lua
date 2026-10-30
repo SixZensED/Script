@@ -2,320 +2,348 @@ local players = game:GetService("Players")
 local runservice = game:GetService("RunService")
 local localplayer = players.LocalPlayer
 local playergui = localplayer:WaitForChild("PlayerGui")
-local older = workspace:FindFirstChild("sixly_esp")
-if older then older:Destroy() end
-local old = playergui:FindFirstChild("sixly_esp")
-if old then old:Destroy() end
+local env = (getgenv and getgenv()) or _G
 
-local screen = Instance.new("ScreenGui")
-screen.Name = "sixly_esp"
-screen.IgnoreGuiInset = true
-screen.ResetOnSpawn = false
-screen.DisplayOrder = 999
-screen.ZIndexBehavior = Enum.ZIndexBehavior.Global
-pcall(function()
-    screen.ScreenInsets = Enum.ScreenInsets.None
-    screen.ClipToDeviceSafeArea = false
-end)
-screen.Parent = playergui
+if not Drawing or type(Drawing.new) ~= "function" then
+    error("Sixly ESP: Drawing API is not supported by this executor")
+end
 
-local canvas = Instance.new("Frame")
-canvas.Name = "Canvas"
-canvas.BackgroundTransparency = 1
-canvas.Size = UDim2.fromScale(1, 1)
-canvas.BorderSizePixel = 0
-canvas.ClipsDescendants = false
-canvas.Parent = screen
+if env.sixly_esp_drawing and type(env.sixly_esp_drawing.destroy) == "function" then
+    pcall(function() env.sixly_esp_drawing:destroy() end)
+end
 
-local glowfolder = Instance.new("Folder")
-glowfolder.Name = "Highlights"
-glowfolder.Parent = workspace
+local oldgui = playergui:FindFirstChild("sixly_esp")
+if oldgui then oldgui:Destroy() end
 
-local esp = {}
-local cache = {}
-local connections = {}
-local closed = false
-local rendername = "sixly_esp_projection_v3"
-
-local enemycolor = Color3.fromRGB(255, 45, 45)
-local teamcolor = Color3.fromRGB(65, 160, 255)
-local tracecolor = Color3.fromRGB(60, 255, 95)
-local black = Color3.fromRGB(12, 12, 12)
+local pink = Color3.fromRGB(255, 48, 230)
+local purple = Color3.fromRGB(186, 67, 255)
+local cyan = Color3.fromRGB(73, 209, 255)
+local white = Color3.fromRGB(255, 250, 255)
+local dark = Color3.fromRGB(18, 9, 25)
+local red = Color3.fromRGB(255, 65, 100)
+local green = Color3.fromRGB(72, 255, 144)
 
 local r15 = {
-    {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"},
-    {"UpperTorso", "LeftUpperArm"}, {"LeftUpperArm", "LeftLowerArm"},
+    {"Head", "UpperTorso"},
+    {"UpperTorso", "LowerTorso"},
+    {"UpperTorso", "LeftUpperArm"},
+    {"LeftUpperArm", "LeftLowerArm"},
     {"LeftLowerArm", "LeftHand"},
-    {"UpperTorso", "RightUpperArm"}, {"RightUpperArm", "RightLowerArm"},
+    {"UpperTorso", "RightUpperArm"},
+    {"RightUpperArm", "RightLowerArm"},
     {"RightLowerArm", "RightHand"},
-    {"LowerTorso", "LeftUpperLeg"}, {"LeftUpperLeg", "LeftLowerLeg"},
+    {"LowerTorso", "LeftUpperLeg"},
+    {"LeftUpperLeg", "LeftLowerLeg"},
     {"LeftLowerLeg", "LeftFoot"},
-    {"LowerTorso", "RightUpperLeg"}, {"RightUpperLeg", "RightLowerLeg"},
+    {"LowerTorso", "RightUpperLeg"},
+    {"RightUpperLeg", "RightLowerLeg"},
     {"RightLowerLeg", "RightFoot"}
 }
 
 local r6 = {
-    {"Head", "Torso"}, {"Torso", "Left Arm"}, {"Torso", "Right Arm"},
-    {"Torso", "Left Leg"}, {"Torso", "Right Leg"}
+    {"Head", "Torso"},
+    {"Torso", "Left Arm"},
+    {"Torso", "Right Arm"},
+    {"Torso", "Left Leg"},
+    {"Torso", "Right Leg"}
 }
 
-local function frame(name, parent, color, height)
-    local object = Instance.new("Frame")
-    object.Name = name
-    object.BorderSizePixel = 0
-    object.BackgroundColor3 = color
-    object.BackgroundTransparency = 0
-    object.AnchorPoint = Vector2.new(0.5, 0.5)
-    object.Size = UDim2.fromOffset(0, height or 2)
+local esp = {
+    enabled = true,
+    teamcheck = false,
+    maxdistance = 1200,
+    tracerorigin = "Top",
+    offset = Vector2.zero,
+    methods = {
+        Glow = true, Box = true, Skeleton = true,
+        Trace = true, Name = true, Health = true, Distance = true
+    }
+}
+
+local cache = {}
+local connections = {}
+local closed = false
+local rendername = "sixly_drawing_esp_v4"
+local highlights = Instance.new("Folder")
+highlights.Name = "sixly_esp_drawing_highlights"
+highlights.Parent = workspace
+
+local function drawing(objects, kind, props)
+    local object = Drawing.new(kind)
     object.Visible = false
-    object.ZIndex = 4
-    object.Parent = parent
+    for key, value in props do
+        object[key] = value
+    end
+    objects.drawings[#objects.drawings + 1] = object
     return object
 end
 
-local function drawline(object, a, b, thickness)
-    local delta = b - a
-    local distance = delta.Magnitude
-    if distance < 1 then
-        object.Visible = false
-        return
-    end
-
-    object.Position = UDim2.fromOffset((a.X + b.X) * 0.5, (a.Y + b.Y) * 0.5)
-    object.Size = UDim2.fromOffset(distance, thickness or 1.5)
-    object.Rotation = math.deg(math.atan2(delta.Y, delta.X))
-    object.Visible = true
+local function line(objects, color, thickness, transparency)
+    return drawing(objects, "Line", {
+        Color = color,
+        Thickness = thickness,
+        Transparency = transparency or 1
+    })
 end
 
-local function create(player)
-    if closed or player == localplayer or cache[player] then return end
+local function square(objects, color, filled, thickness, transparency)
+    return drawing(objects, "Square", {
+        Color = color,
+        Filled = filled,
+        Thickness = thickness or 1,
+        Transparency = transparency or 1
+    })
+end
 
-    local container = Instance.new("Frame")
-    container.Name = tostring(player.UserId)
-    container.BackgroundTransparency = 1
-    container.Size = UDim2.fromScale(1, 1)
-    container.Parent = canvas
+local function label(objects, color, size)
+    return drawing(objects, "Text", {
+        Color = color,
+        Size = size,
+        Center = true,
+        Outline = true,
+        OutlineColor = dark,
+        Font = 2,
+        Transparency = 1
+    })
+end
 
-    local tracer = frame("Trace", container, tracecolor, 1.5)
+local function make(target, isplayer)
+    if cache[target] or closed or target == localplayer then return end
+    local objects = {
+        target = target,
+        isplayer = isplayer,
+        drawings = {},
+        bones = {},
+        model = nil
+    }
 
-    -- Endpoint dot makes it easy to verify the tracer lands on the torso.
-    local dot = frame("Target", container, tracecolor, 3)
-    dot.Size = UDim2.fromOffset(3, 3)
+    objects.boxglow = square(objects, purple, false, 3, 0.3)
+    objects.box = square(objects, pink, false, 1.3, 1)
+    objects.traceglow = line(objects, purple, 3, 0.22)
+    objects.trace = line(objects, white, 1, 0.82)
+    objects.dot = drawing(objects, "Circle", {
+        Color = white, Filled = true, Radius = 2,
+        NumSides = 14, Thickness = 1, Transparency = 1
+    })
+    objects.name = label(objects, white, 13)
+    objects.info = label(objects, white, 12)
+    objects.healthbg = square(objects, dark, true, 1, 0.95)
+    objects.healthfill = square(objects, pink, true, 1, 1)
+    objects.healthoutline = square(objects, purple, false, 1, 0.8)
 
-    local name = Instance.new("TextLabel")
-    name.Name = "Name"
-    name.AnchorPoint = Vector2.new(0.5, 1)
-    name.BackgroundTransparency = 1
-    name.Size = UDim2.fromOffset(200, 20)
-    name.TextScaled = false
-    name.TextSize = 14
-    name.Font = Enum.Font.GothamBold
-    name.TextStrokeColor3 = black
-    name.TextStrokeTransparency = 0
-    name.TextColor3 = enemycolor
-    name.Text = player.Name
-    name.Visible = false
-    name.ZIndex = 6
-    name.Parent = container
-
-    local healthbg = Instance.new("Frame")
-    healthbg.Name = "HealthBackground"
-    healthbg.AnchorPoint = Vector2.new(0.5, 0)
-    healthbg.BorderSizePixel = 0
-    healthbg.Size = UDim2.fromOffset(76, 5)
-    healthbg.BackgroundColor3 = black
-    healthbg.Visible = false
-    healthbg.ZIndex = 6
-    healthbg.Parent = container
-
-    local healthfill = Instance.new("Frame")
-    healthfill.Name = "HealthFill"
-    healthfill.BorderSizePixel = 0
-    healthfill.BackgroundColor3 = enemycolor
-    healthfill.Size = UDim2.fromScale(1, 1)
-    healthfill.ZIndex = 7
-    healthfill.Parent = healthbg
+    for i = 1, #r15 do
+        objects.bones[i] = {
+            glow = line(objects, purple, 4, 0.4),
+            core = line(objects, pink, 1.65, 1)
+        }
+    end
 
     local highlight = Instance.new("Highlight")
-    highlight.Name = "Glow_" .. tostring(player.UserId)
+    highlight.Name = "Glow_" .. target.Name
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.FillTransparency = 1
-    highlight.OutlineTransparency = 0
-    highlight.OutlineColor = enemycolor
+    highlight.FillColor = pink
+    highlight.OutlineColor = purple
+    highlight.FillTransparency = 0.68
+    highlight.OutlineTransparency = 0.04
     highlight.Enabled = false
-    highlight.Parent = glowfolder
-
-    cache[player] = {
-        container = container, tracer = tracer, dot = dot,
-        name = name, healthbg = healthbg, healthfill = healthfill,
-        highlight = highlight, skeleton = {},
-        character = nil, humanoid = nil, head = nil, torso = nil,
-        lasthealth = nil, lastcolor = nil
-    }
+    highlight.Parent = highlights
+    objects.highlight = highlight
+    cache[target] = objects
+    return objects
 end
 
 local function hide(objects)
     objects.highlight.Enabled = false
-    objects.tracer.Visible = false
-    objects.dot.Visible = false
-    objects.name.Visible = false
-    objects.healthbg.Visible = false
-    for _, line in objects.skeleton do
-        line.Visible = false
+    for _, item in objects.drawings do
+        item.Visible = false
     end
 end
 
-local function remove(player)
-    local objects = cache[player]
+local function remove(target)
+    local objects = cache[target]
     if not objects then return end
-    cache[player] = nil
+    cache[target] = nil
     objects.highlight:Destroy()
-    objects.container:Destroy()
+    for _, item in objects.drawings do
+        pcall(function() item:Remove() end)
+    end
 end
 
-local function attach(objects, character)
-    objects.character = character
-    objects.humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    objects.head = character and character:FindFirstChild("Head")
-    objects.torso = character and (
-        character:FindFirstChild("UpperTorso")
-        or character:FindFirstChild("Torso")
-        or character:FindFirstChild("HumanoidRootPart")
-    )
-    objects.highlight.Adornee = character
-    objects.lasthealth = nil
+local function project(camera, world)
+    local point, onscreen = camera:WorldToViewportPoint(world)
+    if not onscreen or point.Z <= 0 then return nil end
+    return Vector2.new(point.X, point.Y) + esp.offset
 end
 
--- All 3D-to-2D conversions go through one camera and one viewport.
--- Convert projected pixels to actual ScreenGui pixels (handles resized windows).
-local function project(camera, world, scaleX, scaleY)
-    local point, visible = camera:WorldToViewportPoint(world)
-    if point.Z <= 0 or not visible then return nil end
-    return Vector2.new(point.X * scaleX, point.Y * scaleY)
-end
+-- Bounding-box projection, including rotated characters/NPCs.
+local function getbox(camera, model)
+    local cf, size = model:GetBoundingBox()
+    local half = size * 0.5
+    local minx, miny = math.huge, math.huge
+    local maxx, maxy = -math.huge, -math.huge
+    local projected = 0
 
-local function skeleton(objects, character, humanoid, camera, sx, sy, color)
-    local bones = humanoid.RigType == Enum.HumanoidRigType.R6 and r6 or r15
-
-    for index, pair in bones do
-        local a = character:FindFirstChild(pair[1])
-        local b = character:FindFirstChild(pair[2])
-        local line = objects.skeleton[index]
-
-        if not line then
-            line = frame("Bone" .. index, objects.container, color, 1.5)
-            objects.skeleton[index] = line
-        end
-
-        if a and b and a:IsA("BasePart") and b:IsA("BasePart") then
-            local p1 = project(camera, a.Position, sx, sy)
-            local p2 = project(camera, b.Position, sx, sy)
-
-            if p1 and p2 then
-                line.BackgroundColor3 = color
-                drawline(line, p1, p2, 1.5)
-            else
-                line.Visible = false
+    for ix = -1, 1, 2 do
+        for iy = -1, 1, 2 do
+            for iz = -1, 1, 2 do
+                local world = cf:PointToWorldSpace(Vector3.new(
+                    half.X * ix, half.Y * iy, half.Z * iz
+                ))
+                local point = camera:WorldToViewportPoint(world)
+                if point.Z > 0 then
+                    minx = math.min(minx, point.X)
+                    miny = math.min(miny, point.Y)
+                    maxx = math.max(maxx, point.X)
+                    maxy = math.max(maxy, point.Y)
+                    projected += 1
+                end
             end
-        else
-            line.Visible = false
         end
     end
 
-    for i = #bones + 1, #objects.skeleton do
-        objects.skeleton[i].Visible = false
-    end
+    if projected ~= 8 then return nil end
+    local top = Vector2.new(minx - 3, miny - 3) + esp.offset
+    local size2d = Vector2.new(maxx - minx + 6, maxy - miny + 6)
+    if size2d.X < 2 or size2d.Y < 2 then return nil end
+    return top, size2d
 end
 
-local function update(player, objects, camera, size, sx, sy)
+local function drawbone(bone, a, b, color)
+    if not a or not b then
+        bone.glow.Visible = false
+        bone.core.Visible = false
+        return
+    end
+    bone.glow.From, bone.glow.To = a, b
+    bone.core.From, bone.core.To = a, b
+    bone.glow.Color = color == cyan and cyan or purple
+    bone.core.Color = color
+    bone.glow.Visible = true
+    bone.core.Visible = true
+end
+
+local function update(target, objects, camera, localroot)
     local methods = esp.methods
-    if not esp.enabled or not methods then
+    local model = objects.isplayer and target.Character or target
+    if not model or not model.Parent then hide(objects) return end
+
+    local humanoid = model:FindFirstChildOfClass("Humanoid")
+    local root = model:FindFirstChild("HumanoidRootPart")
+        or model:FindFirstChild("UpperTorso")
+        or model:FindFirstChild("Torso")
+        or model.PrimaryPart
+    if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then
         hide(objects)
         return
     end
 
-    local character = player.Character
-    if objects.character ~= character or (character and (not objects.torso or not objects.head or not objects.humanoid)) then
-        attach(objects, character)
+    local teammate = false
+    if objects.isplayer then
+        teammate = target.Team ~= nil and target.Team == localplayer.Team
+            and not target.Neutral and not localplayer.Neutral
     end
+    if teammate and esp.teamcheck then hide(objects) return end
 
-    local humanoid, head, torso = objects.humanoid, objects.head, objects.torso
-    if not character or not humanoid or humanoid.Health <= 0
-        or not head or not torso or not head:IsA("BasePart") or not torso:IsA("BasePart") then
+    local color = teammate and cyan or pink
+    local distance = localroot and (localroot.Position - root.Position).Magnitude or 0
+    if esp.maxdistance > 0 and distance > esp.maxdistance then
         hide(objects)
         return
     end
 
-    local teammate = player.Team ~= nil and player.Team == localplayer.Team
-        and not player.Neutral and not localplayer.Neutral
-    if esp.teamcheck and teammate then
-        hide(objects)
-        return
-    end
+    local root2d = project(camera, root.Position)
+    if not root2d then hide(objects) return end
 
-    local color = teammate and teamcolor or enemycolor
-    local torso2d = project(camera, torso.Position, sx, sy)
-    if not torso2d then
-        hide(objects)
-        return
+    if objects.model ~= model then
+        objects.model = model
+        objects.highlight.Adornee = model
     end
+    objects.highlight.FillColor = color
+    objects.highlight.OutlineColor = teammate and cyan or purple
+    objects.highlight.Enabled = methods.Glow == true
 
-    if objects.lastcolor ~= color then
-        objects.lastcolor = color
-        objects.highlight.OutlineColor = color
-        objects.highlight.FillColor = color
-        objects.name.TextColor3 = color
+    local pos, size = getbox(camera, model)
+    if not pos then hide(objects) return end
+    local middle = pos.X + size.X * 0.5
+    local bottom = pos.Y + size.Y
+
+    local showbox = methods.Box == true
+    objects.boxglow.Visible = showbox
+    objects.box.Visible = showbox
+    if showbox then
+        objects.boxglow.Position, objects.boxglow.Size = pos, size
+        objects.box.Position, objects.box.Size = pos, size
+        objects.box.Color = color
+        objects.boxglow.Color = teammate and cyan or purple
     end
-
-    local showglow = methods.Glow == true or methods.Health == true
-    objects.highlight.Enabled = showglow
-    objects.highlight.OutlineTransparency = methods.Glow and 0 or 1
-    objects.highlight.FillTransparency = methods.Health and 0.78 or 1
 
     local showtrace = methods.Trace == true or methods.Line == true
+    objects.trace.Visible = showtrace
+    objects.traceglow.Visible = showtrace
+    objects.dot.Visible = showtrace
     if showtrace then
-        -- Same GUI surface for both endpoints: no Drawing API inset drift.
-        drawline(objects.tracer, Vector2.new(size.X * 0.5, size.Y - 1), torso2d, 1.5)
-        objects.dot.Position = UDim2.fromOffset(torso2d.X, torso2d.Y)
-        objects.dot.Visible = true
-    else
-        objects.tracer.Visible = false
-        objects.dot.Visible = false
+        local viewport = camera.ViewportSize
+        local from = Vector2.new(viewport.X * 0.5,
+            esp.tracerorigin == "Bottom" and viewport.Y or 0) + esp.offset
+        local to = Vector2.new(middle, pos.Y)
+        objects.trace.From, objects.trace.To = from, to
+        objects.traceglow.From, objects.traceglow.To = from, to
+        objects.dot.Position = to
     end
 
     local showname = methods.Name == true
-    local showhealth = methods.Health == true
-    if showname or showhealth then
-        local headtop = head.Position + Vector3.new(0, head.Size.Y * 0.5 + 0.6, 0)
-        local head2d = project(camera, headtop, sx, sy)
-        if head2d then
-            objects.name.Visible = showname
-            objects.name.Position = UDim2.fromOffset(head2d.X, head2d.Y - (showhealth and 5 or 0))
-
-            objects.healthbg.Visible = showhealth
-            objects.healthbg.Position = UDim2.fromOffset(head2d.X, head2d.Y + (showname and 2 or 0))
-            if showhealth then
-                local ratio = math.clamp(humanoid.Health / math.max(humanoid.MaxHealth, 1), 0, 1)
-                if objects.lasthealth ~= ratio then
-                    objects.lasthealth = ratio
-                    objects.healthfill.Size = UDim2.fromScale(ratio, 1)
-                    objects.healthfill.BackgroundColor3 = Color3.fromRGB(255, 55, 55):Lerp(Color3.fromRGB(65, 240, 110), ratio)
-                end
-            end
-        else
-            objects.name.Visible = false
-            objects.healthbg.Visible = false
-        end
-    else
-        objects.name.Visible = false
-        objects.healthbg.Visible = false
+    objects.name.Visible = showname
+    if showname then
+        objects.name.Text = objects.isplayer and target.DisplayName or target.Name
+        objects.name.Position = Vector2.new(middle, pos.Y - 19)
+        objects.name.Color = white
     end
 
-    if methods.Skeleton then
-        skeleton(objects, character, humanoid, camera, sx, sy, color)
-    else
-        for _, line in objects.skeleton do
-            line.Visible = false
+    local showhealth = methods.Health == true
+    objects.healthbg.Visible = showhealth
+    objects.healthfill.Visible = showhealth
+    objects.healthoutline.Visible = showhealth
+    if showhealth then
+        local ratio = math.clamp(humanoid.Health / math.max(humanoid.MaxHealth, 1), 0, 1)
+        local width = math.max(10, size.X)
+        local barpos = Vector2.new(middle - width * 0.5, bottom + 3)
+        local barsize = Vector2.new(width, 4)
+        objects.healthbg.Position, objects.healthbg.Size = barpos, barsize
+        objects.healthfill.Position = barpos
+        objects.healthfill.Size = Vector2.new(math.max(0.1, width * ratio), 4)
+        objects.healthfill.Color = red:Lerp(green, ratio)
+        objects.healthoutline.Position, objects.healthoutline.Size = barpos, barsize
+    end
+
+    local showinfo = methods.Distance == true or methods.Health == true
+    objects.info.Visible = showinfo
+    if showinfo then
+        local parts = {}
+        if methods.Health then
+            parts[#parts + 1] = string.format("%d HP", math.ceil(humanoid.Health))
+        end
+        if methods.Distance then
+            parts[#parts + 1] = string.format("%dm", math.floor(distance / 3.571 + 0.5))
+        end
+        objects.info.Text = table.concat(parts, " | ")
+        objects.info.Position = Vector2.new(middle, bottom + (showhealth and 10 or 5))
+    end
+
+    local showbones = methods.Skeleton == true
+    local bones = humanoid.RigType == Enum.HumanoidRigType.R6 and r6 or r15
+    for i, bone in objects.bones do
+        local pair = bones[i]
+        if not showbones or not pair then
+            bone.glow.Visible = false
+            bone.core.Visible = false
+            continue
+        end
+        local a = model:FindFirstChild(pair[1])
+        local b = model:FindFirstChild(pair[2])
+        if a and b and a:IsA("BasePart") and b:IsA("BasePart") then
+            drawbone(bone, project(camera, a.Position), project(camera, b.Position), color)
+        else
+            drawbone(bone, nil, nil, color)
         end
     end
 end
@@ -323,9 +351,7 @@ end
 function esp:set_enabled(value)
     self.enabled = value == true
     if not self.enabled then
-        for _, objects in cache do
-            hide(objects)
-        end
+        for _, objects in cache do hide(objects) end
     end
 end
 
@@ -349,47 +375,77 @@ function esp:set_teamcheck(value)
     self.teamcheck = value == true
 end
 
-local function cleanup()
-    if closed then return end
-    closed = true
-    runservice:UnbindFromRenderStep(rendername)
-    for _, connection in connections do
-        connection:Disconnect()
+function esp:set_trace_origin(value)
+    self.tracerorigin = value == "Bottom" and "Bottom" or "Top"
+end
+
+function esp:set_maxdistance(value)
+    self.maxdistance = math.max(0, tonumber(value) or 0)
+end
+
+function esp:set_offset(value)
+    if typeof(value) == "Vector2" then self.offset = value end
+end
+
+function esp:add_model(model)
+    if typeof(model) == "Instance" and model:IsA("Model") then
+        make(model, false)
     end
-    for player in cache do
-        remove(player)
+end
+
+function esp:remove_model(model)
+    remove(model)
+end
+
+-- Optional NPC support, including NPCs spawned later.
+function esp:watch_npcs(folder)
+    if typeof(folder) ~= "Instance" then return end
+    for _, descendant in folder:GetDescendants() do
+        if descendant:IsA("Humanoid") and descendant.Parent:IsA("Model") then
+            self:add_model(descendant.Parent)
+        end
     end
-    glowfolder:Destroy()
+    connections[#connections + 1] = folder.DescendantAdded:Connect(function(instance)
+        if instance:IsA("Humanoid") and instance.Parent:IsA("Model") then
+            self:add_model(instance.Parent)
+        end
+    end)
 end
 
 function esp:destroy()
-    cleanup()
-    screen:Destroy()
+    if closed then return end
+    closed = true
+    runservice:UnbindFromRenderStep(rendername)
+    for _, connection in connections do connection:Disconnect() end
+    for target in cache do remove(target) end
+    highlights:Destroy()
+    if env.sixly_esp_drawing == self then env.sixly_esp_drawing = nil end
 end
 
-connections[#connections + 1] = screen.Destroying:Connect(cleanup)
-connections[#connections + 1] = players.PlayerAdded:Connect(create)
+connections[#connections + 1] = players.PlayerAdded:Connect(function(player)
+    make(player, true)
+end)
 connections[#connections + 1] = players.PlayerRemoving:Connect(remove)
 
 for _, player in players:GetPlayers() do
-    create(player)
+    if player ~= localplayer then make(player, true) end
 end
 
 runservice:BindToRenderStep(rendername, Enum.RenderPriority.Camera.Value + 1, function()
-    if closed or not esp.enabled or not esp.methods then return end
+    if closed or not esp.enabled then return end
     local camera = workspace.CurrentCamera
     if not camera then return end
+    local character = localplayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
 
-    local viewport = camera.ViewportSize
-    local size = canvas.AbsoluteSize
-    if viewport.X <= 0 or viewport.Y <= 0 or size.X <= 0 or size.Y <= 0 then return end
-
-    local sx = size.X / viewport.X
-    local sy = size.Y / viewport.Y
-
-    for player, objects in cache do
-        update(player, objects, camera, size, sx, sy)
+    for target, objects in cache do
+        if not objects.isplayer and not target.Parent then
+            remove(target)
+        else
+            update(target, objects, camera, root)
+        end
     end
 end)
 
+env.sixly_esp_drawing = esp
 return esp

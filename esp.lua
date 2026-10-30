@@ -5,55 +5,64 @@ local playergui = localplayer:WaitForChild("PlayerGui")
 local env = (getgenv and getgenv()) or _G
 
 if not Drawing or type(Drawing.new) ~= "function" then
-    error("Sixly ESP: Drawing API is not supported by this executor")
+    error("sixly esp: this executor does not support Drawing.new")
 end
 
 if env.sixly_esp_drawing and type(env.sixly_esp_drawing.destroy) == "function" then
-    pcall(function() env.sixly_esp_drawing:destroy() end)
+    pcall(function()
+        env.sixly_esp_drawing:destroy()
+    end)
 end
 
 local oldgui = playergui:FindFirstChild("sixly_esp")
 if oldgui then oldgui:Destroy() end
 
-local pink = Color3.fromRGB(255, 48, 230)
-local purple = Color3.fromRGB(186, 67, 255)
-local cyan = Color3.fromRGB(73, 209, 255)
-local white = Color3.fromRGB(255, 250, 255)
-local dark = Color3.fromRGB(18, 9, 25)
+local pink = Color3.fromRGB(255, 38, 220)
+local purple = Color3.fromRGB(172, 59, 255)
+local cyan = Color3.fromRGB(65, 210, 255)
+local white = Color3.fromRGB(250, 247, 255)
+local dark = Color3.fromRGB(18, 9, 26)
 local red = Color3.fromRGB(255, 65, 100)
-local green = Color3.fromRGB(72, 255, 144)
+local green = Color3.fromRGB(65, 255, 145)
 
-local r15 = {
-    {"Head", "UpperTorso"},
-    {"UpperTorso", "LowerTorso"},
-    {"UpperTorso", "LeftUpperArm"},
-    {"LeftUpperArm", "LeftLowerArm"},
-    {"LeftLowerArm", "LeftHand"},
-    {"UpperTorso", "RightUpperArm"},
-    {"RightUpperArm", "RightLowerArm"},
-    {"RightLowerArm", "RightHand"},
-    {"LowerTorso", "LeftUpperLeg"},
-    {"LeftUpperLeg", "LeftLowerLeg"},
-    {"LeftLowerLeg", "LeftFoot"},
-    {"LowerTorso", "RightUpperLeg"},
-    {"RightUpperLeg", "RightLowerLeg"},
-    {"RightLowerLeg", "RightFoot"}
+local r6parts = {
+    "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"
 }
 
-local r6 = {
+local r15parts = {
+    "Head", "UpperTorso", "LowerTorso",
+    "LeftUpperArm", "LeftLowerArm", "LeftHand",
+    "RightUpperArm", "RightLowerArm", "RightHand",
+    "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
+    "RightUpperLeg", "RightLowerLeg", "RightFoot"
+}
+
+local r6bones = {
     {"Head", "Torso"},
-    {"Torso", "Left Arm"},
-    {"Torso", "Right Arm"},
-    {"Torso", "Left Leg"},
-    {"Torso", "Right Leg"}
+    {"Torso", "Left Arm"}, {"Torso", "Right Arm"},
+    {"Torso", "Left Leg"}, {"Torso", "Right Leg"}
+}
+
+local r15bones = {
+    {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"},
+    {"UpperTorso", "LeftUpperArm"}, {"LeftUpperArm", "LeftLowerArm"},
+    {"LeftLowerArm", "LeftHand"},
+    {"UpperTorso", "RightUpperArm"}, {"RightUpperArm", "RightLowerArm"},
+    {"RightLowerArm", "RightHand"},
+    {"LowerTorso", "LeftUpperLeg"}, {"LeftUpperLeg", "LeftLowerLeg"},
+    {"LeftLowerLeg", "LeftFoot"},
+    {"LowerTorso", "RightUpperLeg"}, {"RightUpperLeg", "RightLowerLeg"},
+    {"RightLowerLeg", "RightFoot"}
 }
 
 local esp = {
     enabled = true,
     teamcheck = false,
-    maxdistance = 1200,
-    tracerorigin = "Top",
-    offset = Vector2.zero,
+    maxdistance = 1200, 
+    tracerorigin = "Top", 
+    tracertarget = "Root", 
+    offset = Vector2.new(0, 0), 
+    projectionmode = "Viewport",
     methods = {
         Glow = true, Box = true, Skeleton = true,
         Trace = true, Name = true, Health = true, Distance = true
@@ -62,32 +71,34 @@ local esp = {
 
 local cache = {}
 local connections = {}
+local watched = {}
 local closed = false
-local rendername = "sixly_drawing_esp_v4"
+local rendername = "sixly_drawing_esp_v5"
+
 local highlights = Instance.new("Folder")
-highlights.Name = "sixly_esp_drawing_highlights"
+highlights.Name = "sixly_drawing_highlights"
 highlights.Parent = workspace
 
-local function drawing(objects, kind, props)
+local function newdrawing(objects, kind, properties)
     local object = Drawing.new(kind)
     object.Visible = false
-    for key, value in props do
+    for key, value in properties do
         object[key] = value
     end
     objects.drawings[#objects.drawings + 1] = object
     return object
 end
 
-local function line(objects, color, thickness, transparency)
-    return drawing(objects, "Line", {
+local function newline(objects, color, thickness, transparency)
+    return newdrawing(objects, "Line", {
         Color = color,
         Thickness = thickness,
         Transparency = transparency or 1
     })
 end
 
-local function square(objects, color, filled, thickness, transparency)
-    return drawing(objects, "Square", {
+local function newbox(objects, color, filled, thickness, transparency)
+    return newdrawing(objects, "Square", {
         Color = color,
         Filled = filled,
         Thickness = thickness or 1,
@@ -95,10 +106,11 @@ local function square(objects, color, filled, thickness, transparency)
     })
 end
 
-local function label(objects, color, size)
-    return drawing(objects, "Text", {
-        Color = color,
+local function newtext(objects, size)
+    return newdrawing(objects, "Text", {
+        Text = "",
         Size = size,
+        Color = white,
         Center = true,
         Outline = true,
         OutlineColor = dark,
@@ -107,8 +119,9 @@ local function label(objects, color, size)
     })
 end
 
-local function make(target, isplayer)
-    if cache[target] or closed or target == localplayer then return end
+local function create(target, isplayer)
+    if closed or cache[target] or target == localplayer then return end
+
     local objects = {
         target = target,
         isplayer = isplayer,
@@ -117,36 +130,33 @@ local function make(target, isplayer)
         model = nil
     }
 
-    objects.boxglow = square(objects, purple, false, 3, 0.3)
-    objects.box = square(objects, pink, false, 1.3, 1)
-    objects.traceglow = line(objects, purple, 3, 0.22)
-    objects.trace = line(objects, white, 1, 0.82)
-    objects.dot = drawing(objects, "Circle", {
-        Color = white, Filled = true, Radius = 2,
-        NumSides = 14, Thickness = 1, Transparency = 1
-    })
-    objects.name = label(objects, white, 13)
-    objects.info = label(objects, white, 12)
-    objects.healthbg = square(objects, dark, true, 1, 0.95)
-    objects.healthfill = square(objects, pink, true, 1, 1)
-    objects.healthoutline = square(objects, purple, false, 1, 0.8)
+    objects.boxglow = newbox(objects, purple, false, 3, 0.33)
+    objects.box = newbox(objects, pink, false, 1.5, 1)
+    objects.traceglow = newline(objects, purple, 3, 0.3)
+    objects.trace = newline(objects, white, 1, 0.85)
+    objects.name = newtext(objects, 13)
+    objects.info = newtext(objects, 12)
+    objects.healthback = newbox(objects, dark, true, 1, 0.92)
+    objects.healthfill = newbox(objects, green, true, 1, 1)
+    objects.healthborder = newbox(objects, purple, false, 1, 0.85)
 
-    for i = 1, #r15 do
+    for i = 1, #r15bones do
         objects.bones[i] = {
-            glow = line(objects, purple, 4, 0.4),
-            core = line(objects, pink, 1.65, 1)
+            glow = newline(objects, purple, 3.4, 0.4),
+            core = newline(objects, pink, 1.5, 1)
         }
     end
 
     local highlight = Instance.new("Highlight")
-    highlight.Name = "Glow_" .. target.Name
+    highlight.Name = "SixlyGlow_" .. target.Name
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     highlight.FillColor = pink
     highlight.OutlineColor = purple
-    highlight.FillTransparency = 0.68
-    highlight.OutlineTransparency = 0.04
+    highlight.FillTransparency = 0.70
+    highlight.OutlineTransparency = 0
     highlight.Enabled = false
     highlight.Parent = highlights
+
     objects.highlight = highlight
     cache[target] = objects
     return objects
@@ -154,8 +164,8 @@ end
 
 local function hide(objects)
     objects.highlight.Enabled = false
-    for _, item in objects.drawings do
-        item.Visible = false
+    for _, object in objects.drawings do
+        object.Visible = false
     end
 end
 
@@ -164,24 +174,26 @@ local function remove(target)
     if not objects then return end
     cache[target] = nil
     objects.highlight:Destroy()
-    for _, item in objects.drawings do
-        pcall(function() item:Remove() end)
+    for _, object in objects.drawings do
+        pcall(function() object:Remove() end)
     end
 end
 
 local function project(camera, world)
-    local point, onscreen = camera:WorldToViewportPoint(world)
-    if not onscreen or point.Z <= 0 then return nil end
-    return Vector2.new(point.X, point.Y) + esp.offset
+    local point, visible
+    if esp.projectionmode == "Screen" then
+        point, visible = camera:WorldToScreenPoint(world)
+    else
+        point, visible = camera:WorldToViewportPoint(world)
+    end
+    if point.Z <= 0 then return nil end
+    return Vector2.new(point.X, point.Y) + esp.offset, visible
 end
 
--- Bounding-box projection, including rotated characters/NPCs.
-local function getbox(camera, model)
-    local cf, size = model:GetBoundingBox()
-    local half = size * 0.5
-    local minx, miny = math.huge, math.huge
-    local maxx, maxy = -math.huge, -math.huge
-    local projected = 0
+local function extendpart(camera, part, bounds)
+    local cf = part.CFrame
+    local half = part.Size * 0.5
+    local corners = {}
 
     for ix = -1, 1, 2 do
         for iy = -1, 1, 2 do
@@ -189,41 +201,85 @@ local function getbox(camera, model)
                 local world = cf:PointToWorldSpace(Vector3.new(
                     half.X * ix, half.Y * iy, half.Z * iz
                 ))
-                local point = camera:WorldToViewportPoint(world)
-                if point.Z > 0 then
-                    minx = math.min(minx, point.X)
-                    miny = math.min(miny, point.Y)
-                    maxx = math.max(maxx, point.X)
-                    maxy = math.max(maxy, point.Y)
-                    projected += 1
+                local point = project(camera, world)
+                if not point then return false end
+                corners[#corners + 1] = point
+            end
+        end
+    end
+
+    for _, point in corners do
+        bounds.minx = math.min(bounds.minx, point.X)
+        bounds.miny = math.min(bounds.miny, point.Y)
+        bounds.maxx = math.max(bounds.maxx, point.X)
+        bounds.maxy = math.max(bounds.maxy, point.Y)
+    end
+    return true
+end
+
+local function getbodybox(camera, model, humanoid)
+    local names = humanoid.RigType == Enum.HumanoidRigType.R6 and r6parts or r15parts
+    local bounds = {
+        minx = math.huge, miny = math.huge,
+        maxx = -math.huge, maxy = -math.huge
+    }
+    local count = 0
+
+    for _, name in names do
+        local part = model:FindFirstChild(name)
+        if part and part:IsA("BasePart") and extendpart(camera, part, bounds) then
+            count += 1
+        end
+    end
+
+    if count < 2 then
+        bounds.minx, bounds.miny = math.huge, math.huge
+        bounds.maxx, bounds.maxy = -math.huge, -math.huge
+        count = 0
+        local root = model:FindFirstChild("HumanoidRootPart")
+        for _, part in model:GetChildren() do
+            if part:IsA("BasePart") and part ~= root
+                and part.Name ~= "Hitbox" and part.Name ~= "Collision" then
+                if part.Size.Magnitude <= 15 and extendpart(camera, part, bounds) then
+                    count += 1
                 end
             end
         end
     end
 
-    if projected ~= 8 then return nil end
-    local top = Vector2.new(minx - 3, miny - 3) + esp.offset
-    local size2d = Vector2.new(maxx - minx + 6, maxy - miny + 6)
-    if size2d.X < 2 or size2d.Y < 2 then return nil end
-    return top, size2d
+    if count == 0 then return nil end
+
+    local width = bounds.maxx - bounds.minx
+    local height = bounds.maxy - bounds.miny
+    if width < 1 or height < 2 then return nil end
+
+    if width > height * 1.8 then
+        local mid = (bounds.minx + bounds.maxx) * 0.5
+        width = height * 1.8
+        bounds.minx = mid - width * 0.5
+    end
+
+    return Vector2.new(bounds.minx - 2, bounds.miny - 2),
+        Vector2.new(width + 4, height + 4)
 end
 
-local function drawbone(bone, a, b, color)
+local function drawbone(bone, a, b, color, glowcolor)
     if not a or not b then
         bone.glow.Visible = false
         bone.core.Visible = false
         return
     end
-    bone.glow.From, bone.glow.To = a, b
-    bone.core.From, bone.core.To = a, b
-    bone.glow.Color = color == cyan and cyan or purple
+    bone.glow.From = a
+    bone.glow.To = b
+    bone.core.From = a
+    bone.core.To = b
+    bone.glow.Color = glowcolor
     bone.core.Color = color
     bone.glow.Visible = true
     bone.core.Visible = true
 end
 
 local function update(target, objects, camera, localroot)
-    local methods = esp.methods
     local model = objects.isplayer and target.Character or target
     if not model or not model.Parent then hide(objects) return end
 
@@ -232,7 +288,8 @@ local function update(target, objects, camera, localroot)
         or model:FindFirstChild("UpperTorso")
         or model:FindFirstChild("Torso")
         or model.PrimaryPart
-    if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then
+    if not humanoid or humanoid.Health <= 0
+        or not root or not root:IsA("BasePart") then
         hide(objects)
         return
     end
@@ -242,97 +299,114 @@ local function update(target, objects, camera, localroot)
         teammate = target.Team ~= nil and target.Team == localplayer.Team
             and not target.Neutral and not localplayer.Neutral
     end
-    if teammate and esp.teamcheck then hide(objects) return end
+    if esp.teamcheck and teammate then hide(objects) return end
 
-    local color = teammate and cyan or pink
-    local distance = localroot and (localroot.Position - root.Position).Magnitude or 0
-    if esp.maxdistance > 0 and distance > esp.maxdistance then
+    local distance = localroot and (root.Position - localroot.Position).Magnitude or 0
+    if esp.maxdistance > 0 and localroot and distance > esp.maxdistance then
         hide(objects)
         return
     end
 
-    local root2d = project(camera, root.Position)
-    if not root2d then hide(objects) return end
+    local root2d, rootvisible = project(camera, root.Position)
+    if not root2d or not rootvisible then hide(objects) return end
+
+    local head = model:FindFirstChild("Head")
+    local head2d
+    if head and head:IsA("BasePart") then
+        head2d = project(camera, head.Position + Vector3.new(0, head.Size.Y * 0.7 + 0.12, 0))
+    end
+    
+    local pos, size = getbodybox(camera, model, humanoid)
+    if not pos then hide(objects) return end
 
     if objects.model ~= model then
         objects.model = model
         objects.highlight.Adornee = model
     end
-    objects.highlight.FillColor = color
-    objects.highlight.OutlineColor = teammate and cyan or purple
-    objects.highlight.Enabled = methods.Glow == true
 
-    local pos, size = getbox(camera, model)
-    if not pos then hide(objects) return end
-    local middle = pos.X + size.X * 0.5
-    local bottom = pos.Y + size.Y
+    local methods = esp.methods
+    local color = teammate and cyan or pink
+    local glowcolor = teammate and cyan or purple
+
+    objects.highlight.Enabled = methods.Glow == true
+    objects.highlight.FillColor = color
+    objects.highlight.OutlineColor = glowcolor
+
+    local boxmiddle = pos.X + size.X * 0.5
+    local boxbottom = pos.Y + size.Y
+    local anchorx = head2d and head2d.X or root2d.X
 
     local showbox = methods.Box == true
-    objects.boxglow.Visible = showbox
     objects.box.Visible = showbox
+    objects.boxglow.Visible = showbox
     if showbox then
-        objects.boxglow.Position, objects.boxglow.Size = pos, size
         objects.box.Position, objects.box.Size = pos, size
+        objects.boxglow.Position, objects.boxglow.Size = pos, size
         objects.box.Color = color
-        objects.boxglow.Color = teammate and cyan or purple
+        objects.boxglow.Color = glowcolor
     end
 
     local showtrace = methods.Trace == true or methods.Line == true
     objects.trace.Visible = showtrace
     objects.traceglow.Visible = showtrace
-    objects.dot.Visible = showtrace
     if showtrace then
         local viewport = camera.ViewportSize
-        local from = Vector2.new(viewport.X * 0.5,
-            esp.tracerorigin == "Bottom" and viewport.Y or 0) + esp.offset
-        local to = Vector2.new(middle, pos.Y)
+        local from = Vector2.new(
+            viewport.X * 0.5,
+            esp.tracerorigin == "Bottom" and viewport.Y or 0
+        ) + esp.offset
+        local to = root2d
+        if esp.tracertarget == "Head" then
+            to = head2d or root2d
+        elseif esp.tracertarget == "Feet" then
+            to = Vector2.new(boxmiddle, boxbottom)
+        end
         objects.trace.From, objects.trace.To = from, to
         objects.traceglow.From, objects.traceglow.To = from, to
-        objects.dot.Position = to
     end
 
     local showname = methods.Name == true
     objects.name.Visible = showname
     if showname then
-        objects.name.Text = objects.isplayer and target.DisplayName or target.Name
-        objects.name.Position = Vector2.new(middle, pos.Y - 19)
+        objects.name.Text = objects.isplayer and target.Name or target.Name
+        objects.name.Position = Vector2.new(anchorx, (head2d and head2d.Y or pos.Y) - 17)
         objects.name.Color = white
     end
 
     local showhealth = methods.Health == true
-    objects.healthbg.Visible = showhealth
+    objects.healthback.Visible = showhealth
     objects.healthfill.Visible = showhealth
-    objects.healthoutline.Visible = showhealth
+    objects.healthborder.Visible = showhealth
     if showhealth then
         local ratio = math.clamp(humanoid.Health / math.max(humanoid.MaxHealth, 1), 0, 1)
-        local width = math.max(10, size.X)
-        local barpos = Vector2.new(middle - width * 0.5, bottom + 3)
-        local barsize = Vector2.new(width, 4)
-        objects.healthbg.Position, objects.healthbg.Size = barpos, barsize
+        local barwidth = math.max(20, math.min(size.X, 85))
+        local barpos = Vector2.new(boxmiddle - barwidth * 0.5, boxbottom + 5)
+        local barsize = Vector2.new(barwidth, 4)
+        objects.healthback.Position, objects.healthback.Size = barpos, barsize
         objects.healthfill.Position = barpos
-        objects.healthfill.Size = Vector2.new(math.max(0.1, width * ratio), 4)
+        objects.healthfill.Size = Vector2.new(barwidth * ratio, 4)
         objects.healthfill.Color = red:Lerp(green, ratio)
-        objects.healthoutline.Position, objects.healthoutline.Size = barpos, barsize
+        objects.healthborder.Position, objects.healthborder.Size = barpos, barsize
     end
 
-    local showinfo = methods.Distance == true or methods.Health == true
+    local showinfo = methods.Health == true or methods.Distance == true
     objects.info.Visible = showinfo
     if showinfo then
-        local parts = {}
+        local info = {}
         if methods.Health then
-            parts[#parts + 1] = string.format("%d HP", math.ceil(humanoid.Health))
+            info[#info + 1] = string.format("%d HP", math.ceil(humanoid.Health))
         end
-        if methods.Distance then
-            parts[#parts + 1] = string.format("%dm", math.floor(distance / 3.571 + 0.5))
+        if methods.Distance and localroot then
+            info[#info + 1] = string.format("%d studs", math.floor(distance + 0.5))
         end
-        objects.info.Text = table.concat(parts, " | ")
-        objects.info.Position = Vector2.new(middle, bottom + (showhealth and 10 or 5))
+        objects.info.Text = table.concat(info, " | ")
+        objects.info.Position = Vector2.new(boxmiddle, boxbottom + (showhealth and 13 or 5))
     end
 
     local showbones = methods.Skeleton == true
-    local bones = humanoid.RigType == Enum.HumanoidRigType.R6 and r6 or r15
+    local names = humanoid.RigType == Enum.HumanoidRigType.R6 and r6bones or r15bones
     for i, bone in objects.bones do
-        local pair = bones[i]
+        local pair = names[i]
         if not showbones or not pair then
             bone.glow.Visible = false
             bone.core.Visible = false
@@ -341,9 +415,9 @@ local function update(target, objects, camera, localroot)
         local a = model:FindFirstChild(pair[1])
         local b = model:FindFirstChild(pair[2])
         if a and b and a:IsA("BasePart") and b:IsA("BasePart") then
-            drawbone(bone, project(camera, a.Position), project(camera, b.Position), color)
+            drawbone(bone, project(camera, a.Position), project(camera, b.Position), color, glowcolor)
         else
-            drawbone(bone, nil, nil, color)
+            drawbone(bone, nil, nil, color, glowcolor)
         end
     end
 end
@@ -379,6 +453,10 @@ function esp:set_trace_origin(value)
     self.tracerorigin = value == "Bottom" and "Bottom" or "Top"
 end
 
+function esp:set_trace_target(value)
+    self.tracertarget = (value == "Head" or value == "Feet") and value or "Root"
+end
+
 function esp:set_maxdistance(value)
     self.maxdistance = math.max(0, tonumber(value) or 0)
 end
@@ -387,9 +465,13 @@ function esp:set_offset(value)
     if typeof(value) == "Vector2" then self.offset = value end
 end
 
+function esp:set_projection_mode(value)
+    self.projectionmode = value == "Screen" and "Screen" or "Viewport"
+end
+
 function esp:add_model(model)
     if typeof(model) == "Instance" and model:IsA("Model") then
-        make(model, false)
+        create(model, false)
     end
 end
 
@@ -397,9 +479,9 @@ function esp:remove_model(model)
     remove(model)
 end
 
--- Optional NPC support, including NPCs spawned later.
 function esp:watch_npcs(folder)
-    if typeof(folder) ~= "Instance" then return end
+    if typeof(folder) ~= "Instance" or watched[folder] then return end
+    watched[folder] = true
     for _, descendant in folder:GetDescendants() do
         if descendant:IsA("Humanoid") and descendant.Parent:IsA("Model") then
             self:add_model(descendant.Parent)
@@ -423,12 +505,12 @@ function esp:destroy()
 end
 
 connections[#connections + 1] = players.PlayerAdded:Connect(function(player)
-    make(player, true)
+    create(player, true)
 end)
 connections[#connections + 1] = players.PlayerRemoving:Connect(remove)
 
 for _, player in players:GetPlayers() do
-    if player ~= localplayer then make(player, true) end
+    if player ~= localplayer then create(player, true) end
 end
 
 runservice:BindToRenderStep(rendername, Enum.RenderPriority.Camera.Value + 1, function()
@@ -436,13 +518,12 @@ runservice:BindToRenderStep(rendername, Enum.RenderPriority.Camera.Value + 1, fu
     local camera = workspace.CurrentCamera
     if not camera then return end
     local character = localplayer.Character
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-
+    local localroot = character and character:FindFirstChild("HumanoidRootPart")
     for target, objects in cache do
         if not objects.isplayer and not target.Parent then
             remove(target)
         else
-            update(target, objects, camera, root)
+            update(target, objects, camera, localroot)
         end
     end
 end)

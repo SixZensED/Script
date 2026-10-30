@@ -1,5 +1,4 @@
--- v7
-
+-- v2
 local players = game:GetService("Players")
 local runservice = game:GetService("RunService")
 local uis = game:GetService("UserInputService")
@@ -67,7 +66,7 @@ local esp = {
     tracertarget = "Root",
     offset = Vector2.new(0, 0),
     projectionmode = "Viewport",
-    autoscale = true,
+    autoscale = false,
     scale = Vector2.new(0.8, 0.8),
     methods = {
         Glow = true, Box = true, Skeleton = true,
@@ -93,28 +92,23 @@ local baselineRatio
 local currentRatio
 local function refreshProjection(camera)
     drawingSize = camera.ViewportSize
-    local screenSize = frame.AbsoluteSize
-    if drawingSize.X <= 0 or drawingSize.Y <= 0 then return end
-    if screenSize.X > 0 and screenSize.Y > 0 then
-        currentRatio = Vector2.new(screenSize.X / drawingSize.X, screenSize.Y / drawingSize.Y)
-        if not baselineRatio then baselineRatio = currentRatio end
-    end
-    if esp.autoscale and baselineRatio and currentRatio then
-        projectionScale = Vector2.new(
-            esp.scale.X * currentRatio.X / baselineRatio.X,
-            esp.scale.Y * currentRatio.Y / baselineRatio.Y
-        )
-    else
-        projectionScale = esp.scale
-    end
+    projectionScale = esp.scale
     projectionOrigin = Vector2.zero
+    local screenSize = frame.AbsoluteSize
+    if drawingSize.X > 0 and drawingSize.Y > 0 and screenSize.X > 0 and screenSize.Y > 0 then
+        currentRatio = Vector2.new(screenSize.X / drawingSize.X, screenSize.Y / drawingSize.Y)
+    end
 end
 
 local cache = {}
 local connections = {}
 local watched = {}
 local closed = false
-local rendername = "sixly_drawing_esp_v7_adaptive"
+local lastcamera
+local lastviewport
+local localdeathconnection
+local recoverygeneration = 0
+local rendername = "sixly_drawing_esp_v9_fixed"
 
 local highlights = Instance.new("Folder")
 highlights.Name = "sixly_drawing_highlights"
@@ -317,8 +311,18 @@ local function drawbone(bone, a, b, color, glowcolor)
 end
 
 local function update(target, objects, camera, localroot)
-    local model = objects.isplayer and target.Character or target
-    if not model or not model.Parent then hide(objects) return end
+    local model
+    if objects.isplayer then
+        model = target.Character
+    else
+        model = target
+    end
+    if not model or not model:IsA("Model") or not model.Parent then
+        hide(objects)
+        objects.model = nil
+        objects.highlight.Adornee = nil
+        return
+    end
 
     local humanoid = model:FindFirstChildOfClass("Humanoid")
     local root = model:FindFirstChild("HumanoidRootPart")
@@ -506,8 +510,7 @@ function esp:set_projection_mode(value)
 end
 
 function esp:set_auto_scale(value)
-    self.autoscale = value == true
-    if self.autoscale then baselineRatio = nil end
+    self.autoscale = false
 end
 
 function esp:set_projection_scale(value)
@@ -520,7 +523,7 @@ function esp:get_projection_info()
     local camera = workspace.CurrentCamera
     return {
         cameraViewport = camera and camera.ViewportSize,
-        mode = "Viewport",
+        mode = "Viewport (fixed drawing DPI)",
         scale = self.scale,
         effectiveScale = projectionScale,
         guiSize = frame.AbsoluteSize,
@@ -537,64 +540,11 @@ function esp:clear_calibration()
     self.scale = Vector2.new(0.8, 0.8)
     baselineRatio = nil
     self.offset = Vector2.zero
+    projectionScale = self.scale
 end
 
 function esp:calibrate()
-    if self._calibrationconnection then
-        self._calibrationconnection:Disconnect()
-        self._calibrationconnection = nil
-    end
-    self._samples = {}
-    local samples = self._samples
-    print("[Sixly ESP V7] Click 3-5 different visible character body locations, spread across the screen. Do not click the sky. Calibration ends after 5 clicks.")
-    self._calibrationconnection = uis.InputBegan:Connect(function(input, processed)
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-        local part = mouse.Target
-        if not part or not part:IsA("BasePart") or not part:FindFirstAncestorOfClass("Model") then
-            print("[Sixly ESP V7] Click a solid character body part")
-            return
-        end
-        local model = part:FindFirstAncestorOfClass("Model")
-        if not model:FindFirstChildOfClass("Humanoid") then
-            print("[Sixly ESP V7] Target must be a Humanoid character")
-            return
-        end
-        local camera = workspace.CurrentCamera
-        if not camera then return end
-        local hit = mouse.Hit.Position
-        local projected = camera:WorldToViewportPoint(hit)
-        if projected.Z <= 0 then return end
-        local cursor = uis:GetMouseLocation()
-        samples[#samples + 1] = {x = projected.X, y = projected.Y, mx = cursor.X, my = cursor.Y}
-        print(string.format("[Sixly ESP V7] calibration sample %d/5", #samples))
-        if #samples < 5 then return end
-        local function fit(a, b)
-            local n, sx, sy, sxx, sxy = #samples, 0, 0, 0, 0
-            for _, sample in samples do
-                local x, y = sample[a], sample[b]
-                sx += x
-                sy += y
-                sxx += x * x
-                sxy += x * y
-            end
-            local denominator = n * sxx - sx * sx
-            if math.abs(denominator) < 100 then return 1, 0 end
-            local scale = (n * sxy - sx * sy) / denominator
-            local offset = (sy - scale * sx) / n
-            return scale, offset
-        end
-        local scalex, offsetx = fit("x", "mx")
-        local scaley, offsety = fit("y", "my")
-        if scalex > 0.5 and scalex < 2 and scaley > 0.5 and scaley < 2 then
-            self.scale = Vector2.new(scalex, scaley)
-            self.offset = Vector2.new(offsetx, offsety)
-            print("[Sixly ESP V7] calibrated", self.scale, self.offset)
-        else
-            warn("[Sixly ESP V7] Invalid calibration samples; spread clicks across both axes and retry")
-        end
-        self._calibrationconnection:Disconnect()
-        self._calibrationconnection = nil
-    end)
+    self:clear_calibration()
 end
 
 function esp:add_model(model)
@@ -622,9 +572,59 @@ function esp:watch_npcs(folder)
     end)
 end
 
+function esp:refresh()
+    if closed then return end
+    recoverygeneration += 1
+    baselineRatio = nil
+    currentRatio = nil
+    projectionScale = self.scale
+    projectionOrigin = Vector2.zero
+    lastcamera = nil
+    lastviewport = nil
+    local targets = {}
+    for target, objects in cache do
+        targets[#targets + 1] = {target, objects.isplayer}
+    end
+    for _, item in targets do
+        remove(item[1])
+    end
+    for _, item in targets do
+        if item[1] and (item[2] or item[1].Parent) then
+            create(item[1], item[2])
+        end
+    end
+end
+
+local function scheduleRecovery()
+    recoverygeneration += 1
+    local generation = recoverygeneration
+    task.defer(function()
+        if closed or generation ~= recoverygeneration then return end
+        esp:refresh()
+    end)
+end
+
+local function bindLocalCharacter(character)
+    if localdeathconnection then
+        localdeathconnection:Disconnect()
+        localdeathconnection = nil
+    end
+    scheduleRecovery()
+    task.spawn(function()
+        local humanoid = character:WaitForChild("Humanoid", 10)
+        if closed or localplayer.Character ~= character or not humanoid then return end
+        localdeathconnection = humanoid.Died:Connect(scheduleRecovery)
+    end)
+end
+
+connections[#connections + 1] = localplayer.CharacterAdded:Connect(bindLocalCharacter)
+if localplayer.Character then bindLocalCharacter(localplayer.Character) end
+connections[#connections + 1] = workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(scheduleRecovery)
+
 function esp:destroy()
     if closed then return end
     if self._calibrationconnection then self._calibrationconnection:Disconnect() end
+    if localdeathconnection then localdeathconnection:Disconnect() end
     closed = true
     runservice:UnbindFromRenderStep(rendername)
     for _, connection in connections do connection:Disconnect() end
@@ -647,6 +647,12 @@ runservice:BindToRenderStep(rendername, Enum.RenderPriority.Camera.Value + 1, fu
     if closed or not esp.enabled then return end
     local camera = workspace.CurrentCamera
     if not camera then return end
+    local viewport = camera.ViewportSize
+    if lastcamera and (lastcamera ~= camera or lastviewport ~= viewport) then
+        scheduleRecovery()
+    end
+    lastcamera = camera
+    lastviewport = viewport
     refreshProjection(camera)
     local character = localplayer.Character
     local localroot = character and character:FindFirstChild("HumanoidRootPart")

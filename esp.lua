@@ -16,12 +16,12 @@ local r6bones = {{"Head","Torso"},{"Torso","Left Arm"},{"Torso","Right Arm"},{"T
 local r15bones = {{"Head","UpperTorso"},{"UpperTorso","LowerTorso"},{"UpperTorso","LeftUpperArm"},{"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},{"UpperTorso","RightUpperArm"},{"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},{"LowerTorso","LeftUpperLeg"},{"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},{"LowerTorso","RightUpperLeg"},{"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"}}
 
 local esp = {
-    enabled = true, teamcheck = false, maxdistance = 1200,
+    enabled = false, teamcheck = false, maxdistance = 1200,
     tracerorigin = "Top", tracertarget = "Root",
     offset = Vector2.zero, projectionmode = "Viewport", autoscale = true,
     scale = Vector2.new(1,1),
     drawing = {scale=Vector2.new(1,1),offset=Vector2.zero,autoscale=true,multiplier=Vector2.new(1,1)},
-    methods = {Glow=true,Box=true,Skeleton=true,Trace=true,Name=true,Health=true,Distance=true},
+    methods = {Glow=false,Box=false,Skeleton=false,Trace=false,Name=false,Health=false,Distance=false},
     custom = {}
 }
 local cache, connections, watched = {}, {}, {}

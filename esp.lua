@@ -1,4 +1,4 @@
--- Sixly v5
+-- Sixly ESP v6
 local players = game:GetService("Players")
 local runservice = game:GetService("RunService")
 local localplayer = players.LocalPlayer
@@ -127,6 +127,8 @@ local esp = {
     enabled = false,
     teamcheck = false,
     maxdistance = 1200,
+    arrowradius = 180,
+    arrowsize = 10,
     tracerorigin = "Top",
     tracertarget = "Root",
     offset = Vector2.zero,
@@ -148,6 +150,7 @@ local esp = {
         Health = false,
         Distance = false,
         Weapon = false,
+        Arrow = false,
     },
     custom = {},
 }
@@ -347,6 +350,7 @@ local hide = function(o)
     end
 
     o.visible = false
+    o.offscreen = false
     if o.highlight then
         o.highlight.Enabled = false
     end
@@ -622,6 +626,22 @@ local groupof = function(o, name)
             line(group, 3, palette.outline, 0.85)
             line(group, 1, palette.primary)
         end
+    elseif name == "arrow" then
+        group.outline = newdrawing(group, "Triangle", {
+            Filled = false,
+            Thickness = 2,
+            Color = palette.outline,
+            Transparency = 1,
+            ZIndex = 3,
+        })
+        group.fill = newdrawing(group, "Triangle", {
+            Filled = true,
+            Thickness = 1,
+            Color = palette.primary,
+            Transparency = 1,
+            ZIndex = 4,
+        })
+        group.label = text(group, 11, palette.text)
     elseif name == "trace" then
         line(group, 3, palette.outline, 0.7)
         line(group, 1, palette.primary, 0.85)
@@ -705,6 +725,70 @@ local drawtext = function(o, name, label, position)
     set(group.background, "Position", Vector2.new(position.X - bounds.X * 0.5 - 4, position.Y - 2))
     set(group.background, "Size", Vector2.new(bounds.X + 8, bounds.Y + 4))
     show(group, true)
+end
+
+local drawarrow = function(o, camera, position, distance, color)
+    local look = camera.CFrame.LookVector
+    local forward = Vector2.new(look.X, look.Z)
+    if forward.Magnitude < 0.001 then
+        local right = camera.CFrame.RightVector
+        forward = Vector2.new(right.Z, -right.X)
+    end
+    if forward.Magnitude < 0.001 then
+        return false
+    end
+
+    forward = forward.Unit
+    local delta = position - camera.CFrame.Position
+    local direction = Vector2.new(
+        delta.X * -forward.Y + delta.Z * forward.X,
+        -(delta.X * forward.X + delta.Z * forward.Y)
+    )
+    if not finite(direction.X) or not finite(direction.Y) then
+        return false
+    end
+
+    -- A target directly above/below has no horizontal bearing.
+    direction = direction.Magnitude > 0.001 and direction.Unit or Vector2.new(0, -1)
+    local viewport = Vector2.new(drawingSize.X * projectionScale.X, drawingSize.Y * projectionScale.Y)
+    local shortest = math.min(viewport.X, viewport.Y)
+    if shortest < 120 then
+        return false
+    end
+
+    local scale = math.min(projectionScale.X, projectionScale.Y)
+    local size = math.clamp(finite(esp.arrowsize) and esp.arrowsize or 10, 4, 24) * scale
+    local radius = math.min(
+        math.clamp(finite(esp.arrowradius) and esp.arrowradius or 180, 40, 600) * scale,
+        shortest * 0.5 - size * 2 - 28
+    )
+    if radius <= size * 2 then
+        return false
+    end
+
+    local center = viewport * 0.5 + esp.offset
+    local tip = center + direction * radius
+    local base = tip - direction * size * 1.4
+    local side = Vector2.new(-direction.Y, direction.X) * size * 0.9
+    local group = groupof(o, "arrow")
+
+    for i = 1, 2 do
+        local drawing = group[i]
+        set(drawing, "PointA", tip)
+        set(drawing, "PointB", base + side)
+        set(drawing, "PointC", base - side)
+    end
+    set(group.fill, "Color", color)
+    set(group.label, "Text", string.format("%dm", math.floor(distance * studs_to_meters + 0.5)))
+
+    local bounds = group.label.object.TextBounds
+    if typeof(bounds) ~= "Vector2" or bounds.X <= 0 or bounds.Y <= 0 then
+        bounds = Vector2.new(#group.label.state.Text * 6.6, 11)
+    end
+    local gap = math.abs(direction.X) * (bounds.X * 0.5 + 8) + math.abs(direction.Y) * (bounds.Y * 0.5 + 8)
+    set(group.label, "Position", base - direction * gap - Vector2.new(0, bounds.Y * 0.5))
+    show(group, true)
+    return true
 end
 
 local drawhealth = function(o, pos, size, health, maximum)
@@ -968,13 +1052,29 @@ local update = function(target, o, camera, origin)
         return
     end
 
+    local methods = esp.methods
+    local color = teammate and palette.ally or palette.primary
     local root2d, visible = project(camera, root.Position)
     if not root2d or not visible then
-        hide(o)
+        if methods.Arrow == true then
+            if not o.offscreen then
+                hide(o)
+            end
+            if drawarrow(o, camera, root.Position, distance, color) then
+                o.visible, o.offscreen = true, true
+            else
+                hide(o)
+            end
+        else
+            hide(o)
+        end
         return
     end
 
-    local methods = esp.methods
+    if o.offscreen then
+        show(o.groups.arrow, false)
+        o.offscreen = false
+    end
     local box = methods.Box == true
     local name = methods.Name == true
     local healthbar = methods.Health == true
@@ -998,7 +1098,6 @@ local update = function(target, o, camera, origin)
     end
 
     o.visible = true
-    local color = teammate and palette.ally or palette.primary
     drawglow(o, methods.Glow == true, color)
     if box and pos then
         drawbox(o, pos, size, color)
@@ -1267,6 +1366,7 @@ runservice:BindToRenderStep(rendername, Enum.RenderPriority.Camera.Value + 1, fu
             or methods.Health
             or methods.Distance
             or methods.Weapon
+            or methods.Arrow
         )
     then
         for _, o in cache do

@@ -1,4 +1,4 @@
--- Sixly ESP v4: standalone module, compatible with the v3 public API.
+-- Sixly v5
 local players = game:GetService("Players")
 local runservice = game:GetService("RunService")
 local localplayer = players.LocalPlayer
@@ -230,6 +230,23 @@ local rootof = function(target, model, body)
         or model.PrimaryPart
 end
 
+local get_distance_origin = function(camera)
+    local origin = call("get_distance_origin", localplayer, camera)
+    if typeof(origin) == "Vector3" and finite(origin.X) and finite(origin.Y) and finite(origin.Z) then
+        return origin
+    end
+
+    local character = characterof(localplayer, true)
+    if typeof(character) == "Instance" and character:IsA("Model") then
+        local root = rootof(localplayer, character)
+        if typeof(root) == "Instance" and root:IsA("BasePart") then
+            return root.Position
+        end
+    end
+
+    return camera.CFrame.Position
+end
+
 local get_weapon = function(target, model, body)
     local value
     if type(esp.custom.get_weapon) == "function" then
@@ -251,9 +268,9 @@ local get_weapon = function(target, model, body)
     return value ~= "" and value or nil
 end
 
-local get_info_text = function(target, model, body, methods, distance, localroot)
+local get_info_text = function(target, model, body, methods, distance, origin)
     local label
-    if methods.Distance == true and localroot then
+    if methods.Distance == true and origin then
         label = string.format("%dm", math.floor(distance * studs_to_meters + 0.5))
     end
 
@@ -897,7 +914,7 @@ local drawglow = function(o, enabled, color)
     end
 end
 
-local update = function(target, o, camera, localroot)
+local update = function(target, o, camera, origin)
     local model = characterof(target, o.isplayer)
     if typeof(model) ~= "Instance" or not model:IsA("Model") or not model.Parent then
         hide(o)
@@ -945,8 +962,8 @@ local update = function(target, o, camera, localroot)
         return
     end
 
-    local distance = localroot and (root.Position - localroot.Position).Magnitude or 0
-    if esp.maxdistance > 0 and localroot and distance > esp.maxdistance then
+    local distance = (root.Position - origin).Magnitude
+    if esp.maxdistance > 0 and distance > esp.maxdistance then
         hide(o)
         return
     end
@@ -1022,7 +1039,7 @@ local update = function(target, o, camera, localroot)
     end
 
     if (distanceinfo or weaponinfo) and pos then
-        local label = get_info_text(target, model, body, methods, distance, localroot)
+        local label = get_info_text(target, model, body, methods, distance, origin)
         if label then
             drawtext(o, "info", label, Vector2.new(pos.X + size.X * 0.5, pos.Y + size.Y + 5))
         else
@@ -1259,17 +1276,10 @@ runservice:BindToRenderStep(rendername, Enum.RenderPriority.Camera.Value + 1, fu
         return
     end
 
-    local localcharacter = characterof(localplayer, true)
-    local localroot = typeof(localcharacter) == "Instance"
-            and localcharacter:IsA("Model")
-            and rootof(localplayer, localcharacter)
-        or nil
-    if typeof(localroot) ~= "Instance" or not localroot:IsA("BasePart") then
-        localroot = nil
-    end
+    local origin = get_distance_origin(camera)
 
     for target, o in cache do
-        local ok, message = pcall(update, target, o, camera, localroot)
+        local ok, message = pcall(update, target, o, camera, origin)
         if not ok then
             hide(o)
             report("render", message)

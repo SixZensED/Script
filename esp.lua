@@ -1,4 +1,4 @@
--- Sixly ESP v7.2
+-- Sixly ESP v7.3
 local players = game:GetService("Players")
 local runservice = game:GetService("RunService")
 local localplayer = players.LocalPlayer
@@ -1200,8 +1200,6 @@ for i = 1, 18 do
     set(fov_inner[i], "ZIndex", 6)
 end
 
-local fov_backdrop = Color3.fromRGB(10, 8, 19)
-
 local fov_corners = {}
 
 for i = 1, 4 do
@@ -1209,18 +1207,23 @@ for i = 1, 4 do
     fov_corners[i] = corner
 
     for j = 1, 8 do
-        local drawing = line(fov_marker, 1.9, i % 2 == 0 and fov.accent or fov.color, 1)
+        local drawing = line(fov_marker, 1.5, fov.accent, 1)
         set(drawing, "ZIndex", 15)
         corner[j] = drawing
     end
 end
 
-local fov_trace_back = line(fov_trace, 9, fov_backdrop, 0.97)
-local fov_trace_middle = line(fov_trace, 5.5, fov.accent, 1)
-local fov_trace_front = line(fov_trace, 2.8, fov.color, 1)
-set(fov_trace_back, "ZIndex", 9)
-set(fov_trace_middle, "ZIndex", 10)
-set(fov_trace_front, "ZIndex", 11)
+local fov_dot = newdrawing(fov_marker, "Circle", {
+    Filled = true,
+    Radius = 2.5,
+    NumSides = 24,
+    Color = Color3.fromRGB(255, 255, 255),
+    Transparency = 1,
+    ZIndex = 16,
+})
+
+local fov_trace_line = line(fov_trace, 1.5, fov.color, 1)
+set(fov_trace_line, "ZIndex", 11)
 local hide_fov = function()
     show(fov_ring, false)
     show(fov_marker, false)
@@ -1407,7 +1410,6 @@ local update_fov_marker = function(camera, part, dt, phase)
 
     for i, corner in fov_corners do
         local middle = math.pi * 0.25 + (i - 1) * math.pi * 0.5
-        local color = i % 2 == 0 and fov.accent or fov.color
         local step = arc / #corner
         local first = middle - arc * 0.5
 
@@ -1416,10 +1418,11 @@ local update_fov_marker = function(camera, part, dt, phase)
             local b = a + step
             set(drawing, "From", center + Vector2.new(math.cos(a), math.sin(a)) * radius)
             set(drawing, "To", center + Vector2.new(math.cos(b), math.sin(b)) * radius)
-            set(drawing, "Color", color)
+            set(drawing, "Color", fov.accent)
         end
     end
 
+    set(fov_dot, "Position", center)
     show(fov_marker, true)
     return center
 end
@@ -1444,14 +1447,9 @@ local update_fov_trace = function(camera, position, phase)
     local direction = delta / distance
     local from = origin + direction * 11
     local to = position - direction * 22
-    set(fov_trace_back, "From", from)
-    set(fov_trace_back, "To", to)
-    set(fov_trace_middle, "From", from)
-    set(fov_trace_middle, "To", to)
-    set(fov_trace_middle, "Color", fov.accent)
-    set(fov_trace_front, "From", from)
-    set(fov_trace_front, "To", to)
-    set(fov_trace_front, "Color", fov.color)
+    set(fov_trace_line, "From", from)
+    set(fov_trace_line, "To", to)
+    set(fov_trace_line, "Color", fov.color)
     show(fov_trace, true)
 end
 

@@ -1156,6 +1156,434 @@ local update = function(target, o, camera, origin)
     end
 end
 
+esp.fov = {
+    enabled = false,
+    marker = true,
+    radius = 150,
+    thickness = 1,
+    color = Color3.fromRGB(68, 64, 57),
+    accent = Color3.fromRGB(245, 67, 103),
+    animation = "Both",
+    speed = 0.65,
+    teamcheck = true,
+    wallcheck = true,
+    method = "Head",
+}
+
+local fov = esp.fov
+local fov_ring = { visible = false }
+local fov_marker = { visible = false }
+local fov_outer, fov_inner, fov_brackets = {}, {}, {}
+local fov_sources = {}
+local fov_priority = {"SilentAim", "Aimbot", "Default"}
+local fov_phase = 0
+local fov_rotation = 0
+local fov_auto_target
+local fov_next_scan = 0
+local fov_last_target
+local fov_marker_position
+
+for i = 1, 36 do
+    fov_outer[i] = line(fov_ring, 1, fov.color, 0.85)
+end
+
+for i = 1, 18 do
+    fov_inner[i] = line(fov_ring, 1, fov.color, 0.38)
+end
+
+for i = 1, 8 do
+    fov_brackets[i] = line(fov_marker, 2, fov.accent, 1)
+end
+
+local fov_dot = newdrawing(fov_marker, "Circle", {
+    Filled = true,
+    Radius = 2,
+    NumSides = 16,
+    Color = fov.accent,
+    Transparency = 1,
+    ZIndex = 8,
+})
+
+local fov_focus = newdrawing(fov_marker, "Circle", {
+    Filled = false,
+    Radius = 11,
+    NumSides = 32,
+    Thickness = 1.5,
+    Color = fov.accent,
+    Transparency = 0.85,
+    ZIndex = 7,
+})
+
+local fov_badge = square(fov_marker, true, 1, fov.accent)
+local fov_badge_left = newdrawing(fov_marker, "Circle", {
+    Filled = true, Radius = 8, NumSides = 20,
+    Color = fov.accent, Transparency = 1, ZIndex = 8,
+})
+local fov_badge_right = newdrawing(fov_marker, "Circle", {
+    Filled = true, Radius = 8, NumSides = 20,
+    Color = fov.accent, Transparency = 1, ZIndex = 8,
+})
+local fov_label = text(fov_marker, 11, Color3.fromRGB(32, 24, 30))
+set(fov_badge, "ZIndex", 8)
+set(fov_label, "ZIndex", 9)
+set(fov_label, "Outline", false)
+
+local hide_fov = function()
+    show(fov_ring, false)
+    show(fov_marker, false)
+    fov_last_target = nil
+    fov_marker_position = nil
+end
+
+local get_fov_part = function(character, method)
+    if method == "Head" then
+        return character:FindFirstChild("Head")
+            or character:FindFirstChild("UpperTorso")
+            or character:FindFirstChild("Torso")
+            or character:FindFirstChild("HumanoidRootPart")
+    end
+
+    return character:FindFirstChild("UpperTorso")
+        or character:FindFirstChild("Torso")
+        or character:FindFirstChild("HumanoidRootPart")
+end
+
+local fov_screen_position = function(camera, part)
+    if typeof(part) ~= "Instance" or not part:IsA("BasePart")
+        or not part:IsDescendantOf(workspace) then return nil end
+
+    local character = part.Parent
+    if not character or character == localplayer.Character then return nil end
+
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return nil end
+
+    local screen, visible = camera:WorldToViewportPoint(part.Position)
+    if not visible or screen.Z <= 0 then return nil end
+
+    local center = camera.ViewportSize * 0.5
+    local distance = (Vector2.new(screen.X, screen.Y) - center).Magnitude
+    if distance > fov.radius then return nil end
+
+    return Vector2.new(
+        screen.X * projectionScale.X + esp.offset.X,
+        screen.Y * projectionScale.Y + esp.offset.Y
+    )
+end
+
+local fov_can_hit = function(origin, part, character)
+    local direction = part.Position - origin
+    if direction.Magnitude <= 0.01 then return false end
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+
+    local filter = {}
+    if localplayer.Character then filter[#filter + 1] = localplayer.Character end
+    if workspace.CurrentCamera then filter[#filter + 1] = workspace.CurrentCamera end
+    params.FilterDescendantsInstances = filter
+
+    local result = workspace:Raycast(origin, direction, params)
+    return not result or result.Instance:IsDescendantOf(character)
+end
+
+local find_fov_target = function(camera, method, teamcheck, wallcheck, range)
+    local center = camera.ViewportSize * 0.5
+    local origin = camera.CFrame.Position
+    local nearest = math.huge
+    local selected
+
+    for _, player in players:GetPlayers() do
+        if player == localplayer then continue end
+        if teamcheck and localplayer.Team and player.Team == localplayer.Team then continue end
+
+        local character = player.Character
+        if not character then continue end
+
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then continue end
+
+        local part = get_fov_part(character, method)
+        if not part or not part:IsA("BasePart") then continue end
+
+        local distance3d = (part.Position - origin).Magnitude
+        if distance3d <= 0.01 or distance3d > range then continue end
+
+        local screen, visible = camera:WorldToViewportPoint(part.Position)
+        if not visible or screen.Z <= 0 then continue end
+
+        local distance = (Vector2.new(screen.X, screen.Y) - center).Magnitude
+        if distance > fov.radius or distance >= nearest then continue end
+        if wallcheck and not fov_can_hit(origin, part, character) then continue end
+
+        nearest = distance
+        selected = part
+    end
+
+    return selected
+end
+
+local get_fov_selected = function(camera)
+    local now = os.clock()
+
+    for _, name in fov_priority do
+        local source = fov_sources[name]
+        if source then
+            if now <= source.expires and fov_screen_position(camera, source.part) then
+                return source.part
+            elseif now > source.expires then
+                fov_sources[name] = nil
+            end
+        end
+    end
+
+    if now >= fov_next_scan then
+        fov_next_scan = now + 0.065
+        fov_auto_target = find_fov_target(camera, fov.method, fov.teamcheck, fov.wallcheck, math.huge)
+    end
+
+    if fov_auto_target and fov_screen_position(camera, fov_auto_target) then
+        return fov_auto_target
+    end
+
+    return nil
+end
+
+local update_fov_ring = function(camera, radius, angle, acquired)
+    local center = Vector2.new(
+        camera.ViewportSize.X * 0.5 * projectionScale.X + esp.offset.X,
+        camera.ViewportSize.Y * 0.5 * projectionScale.Y + esp.offset.Y
+    )
+
+    local draw_arc = function(drawing, a, b, r, color, alpha)
+        set(drawing, "From", center + Vector2.new(
+            math.cos(a) * r * projectionScale.X,
+            math.sin(a) * r * projectionScale.Y
+        ))
+        set(drawing, "To", center + Vector2.new(
+            math.cos(b) * r * projectionScale.X,
+            math.sin(b) * r * projectionScale.Y
+        ))
+        set(drawing, "Thickness", fov.thickness)
+        set(drawing, "Color", color)
+        set(drawing, "Transparency", alpha)
+    end
+
+    local outer_color = acquired and fov.color:Lerp(fov.accent, 0.25) or fov.color
+    local step = math.pi * 2 / #fov_outer
+    for i, drawing in fov_outer do
+        local a = (i - 1) * step + angle
+        draw_arc(drawing, a, a + step * 0.57, radius, outer_color, i % 4 == 0 and 0.55 or 0.88)
+    end
+
+    local inner_step = math.pi * 2 / #fov_inner
+    for i, drawing in fov_inner do
+        local a = (i - 1) * inner_step - angle * 0.45
+        draw_arc(drawing, a, a + inner_step * 0.36, radius - 4, fov.color, 0.34)
+    end
+
+    show(fov_ring, true)
+end
+
+local update_fov_marker = function(camera, part, dt, phase)
+    local position = fov_screen_position(camera, part)
+    if not position then
+        show(fov_marker, false)
+        fov_last_target = nil
+        return
+    end
+
+    if part ~= fov_last_target then
+        fov_marker_position = position
+        fov_last_target = part
+    else
+        local alpha = 1 - math.exp(-22 * math.clamp(dt or 1 / 60, 0, 0.1))
+        fov_marker_position = fov_marker_position:Lerp(position, alpha)
+    end
+
+    local center = fov_marker_position
+    local pulse = fov.animation == "Pulse" or fov.animation == "Both"
+    local size = 10 + (pulse and math.sin(phase * 3) * 1.2 or 0)
+    local length = 5
+    local x, y = center.X, center.Y
+    local draw_corner = function(drawing, x1, y1, x2, y2)
+        set(drawing, "From", Vector2.new(x1, y1))
+        set(drawing, "To", Vector2.new(x2, y2))
+        set(drawing, "Color", fov.accent)
+    end
+
+    draw_corner(fov_brackets[1], x - size, y - size + length, x - size, y - size)
+    draw_corner(fov_brackets[2], x - size, y - size, x - size + length, y - size)
+    draw_corner(fov_brackets[3], x + size - length, y - size, x + size, y - size)
+    draw_corner(fov_brackets[4], x + size, y - size, x + size, y - size + length)
+    draw_corner(fov_brackets[5], x - size, y + size - length, x - size, y + size)
+    draw_corner(fov_brackets[6], x - size, y + size, x - size + length, y + size)
+    draw_corner(fov_brackets[7], x + size - length, y + size, x + size, y + size)
+    draw_corner(fov_brackets[8], x + size, y + size - length, x + size, y + size)
+
+    set(fov_dot, "Position", center)
+    set(fov_dot, "Color", fov.accent)
+    set(fov_focus, "Position", center)
+    set(fov_focus, "Radius", size + 3)
+    set(fov_focus, "Color", fov.accent)
+
+    local player = players:GetPlayerFromCharacter(part.Parent)
+    local name = (player and player.Name) or part.Parent.Name
+    name = tostring(name):sub(1, 14)
+
+    local width = math.clamp(#name * 6 + 14, 30, 108)
+    local badge_y = y + size + 7
+    set(fov_badge, "Position", Vector2.new(x - width * 0.5 + 8, badge_y))
+    set(fov_badge, "Size", Vector2.new(width - 16, 16))
+    set(fov_badge, "Color", fov.accent)
+    set(fov_badge_left, "Position", Vector2.new(x - width * 0.5 + 8, badge_y + 8))
+    set(fov_badge_left, "Color", fov.accent)
+    set(fov_badge_right, "Position", Vector2.new(x + width * 0.5 - 8, badge_y + 8))
+    set(fov_badge_right, "Color", fov.accent)
+    set(fov_label, "Text", name)
+    set(fov_label, "Position", Vector2.new(x, badge_y))
+
+    show(fov_marker, true)
+end
+
+local update_fov = function(camera, dt)
+    if not fov.enabled then
+        hide_fov()
+        return
+    end
+
+    dt = math.clamp(type(dt) == "number" and dt or 1 / 60, 0, 0.1)
+    local speed = fov.speed
+    fov_phase = (fov_phase + dt * speed) % (math.pi * 2)
+    fov_rotation = (fov_rotation + dt * speed * 0.32) % (math.pi * 2)
+
+    local target = fov.marker and get_fov_selected(camera) or nil
+    local rotate = fov.animation == "Rotate" or fov.animation == "Both"
+    local pulse = fov.animation == "Pulse" or fov.animation == "Both"
+    local angle = rotate and fov_rotation or 0
+    local radius = fov.radius + (pulse and math.sin(fov_phase * 3) * 1.8 or 0)
+
+    update_fov_ring(camera, radius, angle, target ~= nil)
+
+    if target then
+        update_fov_marker(camera, target, dt, fov_phase)
+    else
+        show(fov_marker, false)
+        fov_last_target = nil
+        fov_marker_position = nil
+    end
+end
+
+local destroy_fov = function()
+    for _, group in {fov_ring, fov_marker} do
+        for _, drawing in group do
+            pcall(function()
+                drawing.object:Remove()
+            end)
+        end
+    end
+    table.clear(fov_sources)
+end
+
+
+esp.set_fov_enabled = function(self, value)
+    if closed then return end
+    self.fov.enabled = value == true
+    if not self.fov.enabled then hide_fov() end
+end
+
+esp.set_fov_radius = function(self, value)
+    value = tonumber(value)
+    if finite(value) then self.fov.radius = math.clamp(value, 1, 1000) end
+end
+
+esp.set_fov_thickness = function(self, value)
+    value = tonumber(value)
+    if finite(value) then self.fov.thickness = math.clamp(value, 1, 10) end
+end
+
+esp.set_fov_animation = function(self, value)
+    if type(value) == "boolean" then
+        self.fov.animation = value and "Both" or "None"
+    elseif value == "Both" or value == "Rotate" or value == "Pulse" or value == "None" then
+        self.fov.animation = value
+    end
+end
+
+esp.set_fov_speed = function(self, value)
+    value = tonumber(value)
+    if finite(value) then self.fov.speed = math.clamp(value, 0, 5) end
+end
+
+esp.set_fov_color = function(self, value)
+    if typeof(value) == "Color3" then self.fov.color = value end
+end
+
+esp.set_fov_accent = function(self, value)
+    if typeof(value) == "Color3" then self.fov.accent = value end
+end
+
+esp.set_fov_marker = function(self, value)
+    self.fov.marker = value == true
+    if not self.fov.marker then show(fov_marker, false) end
+end
+
+esp.set_fov_teamcheck = function(self, value)
+    self.fov.teamcheck = value == true
+    fov_next_scan = 0
+end
+
+esp.set_fov_wallcheck = function(self, value)
+    self.fov.wallcheck = value == true
+    fov_next_scan = 0
+end
+
+esp.set_fov_method = function(self, value)
+    self.fov.method = value == "Torso" and "Torso" or "Head"
+    fov_next_scan = 0
+end
+
+esp.get_fov_target = function(self, method, teamcheck, wallcheck, range)
+    local camera = workspace.CurrentCamera
+    if closed or not camera then return nil end
+    return find_fov_target(camera,
+        method == "Torso" and "Torso" or "Head",
+        teamcheck ~= false,
+        wallcheck ~= false,
+        tonumber(range) or math.huge
+    )
+end
+
+esp.set_fov_target = function(self, part, source, duration)
+    if closed then return end
+    source = (source == "SilentAim" or source == "Aimbot") and source or "Default"
+    if part == nil then
+        fov_sources[source] = nil
+        return
+    end
+    if typeof(part) ~= "Instance" or not part:IsA("BasePart") then return end
+
+    duration = tonumber(duration)
+    if not finite(duration) then duration = 0.25 end
+    fov_sources[source] = {
+        part = part,
+        expires = os.clock() + math.clamp(duration, 0.02, 3),
+    }
+end
+
+esp.clear_fov_target = function(self, source)
+    if type(source) == "string" then
+        fov_sources[source] = nil
+    else
+        table.clear(fov_sources)
+    end
+end
+
+esp.get_fov_radius = function(self)
+    return self.fov.radius
+end
+
 -- Public API: keep existing callers, custom adapters and FOV projection consumers.
 esp.set_enabled = function(self, value)
     if closed then
@@ -1323,6 +1751,7 @@ esp.destroy = function(self)
         remove(target)
     end
 
+    destroy_fov()
     highlights:Destroy()
     gui:Destroy()
     if env.sixly_esp_drawing == self then
@@ -1338,7 +1767,7 @@ for _, player in players:GetPlayers() do
     create(player, true)
 end
 
-runservice:BindToRenderStep(rendername, Enum.RenderPriority.Camera.Value + 1, function()
+runservice:BindToRenderStep(rendername, Enum.RenderPriority.Camera.Value + 1, function(dt)
     if closed then
         return
     end
@@ -1347,6 +1776,13 @@ runservice:BindToRenderStep(rendername, Enum.RenderPriority.Camera.Value + 1, fu
     -- Projection is also shared by FOV circles while ESP is disabled.
     if camera then
         projection(camera)
+        local ok, message = pcall(update_fov, camera, dt)
+        if not ok then
+            hide_fov()
+            report("fov", message)
+        end
+    else
+        hide_fov()
     end
 
     if not esp.enabled then

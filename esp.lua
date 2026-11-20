@@ -1,4 +1,4 @@
--- Sixly ESP v6
+-- Sixly ESP v7.2
 local players = game:GetService("Players")
 local runservice = game:GetService("RunService")
 local localplayer = players.LocalPlayer
@@ -1202,62 +1202,18 @@ end
 
 local fov_backdrop = Color3.fromRGB(10, 8, 19)
 
-local fov_dot_back = newdrawing(fov_marker, "Circle", {
-    Filled = true,
-    Radius = 6,
-    NumSides = 24,
-    Color = fov_backdrop,
-    Transparency = 1,
-    ZIndex = 17,
-})
+local fov_corners = {}
 
-local fov_dot_mid = newdrawing(fov_marker, "Circle", {
-    Filled = true,
-    Radius = 4.2,
-    NumSides = 24,
-    Color = fov.accent,
-    Transparency = 1,
-    ZIndex = 18,
-})
+for i = 1, 4 do
+    local corner = {}
+    fov_corners[i] = corner
 
-local fov_dot = newdrawing(fov_marker, "Circle", {
-    Filled = true,
-    Radius = 2.3,
-    NumSides = 24,
-    Color = fov.color,
-    Transparency = 1,
-    ZIndex = 19,
-})
-
-local fov_focus_back = newdrawing(fov_marker, "Circle", {
-    Filled = false,
-    Radius = 18,
-    NumSides = 48,
-    Thickness = 5.2,
-    Color = fov_backdrop,
-    Transparency = 0.96,
-    ZIndex = 12,
-})
-
-local fov_focus = newdrawing(fov_marker, "Circle", {
-    Filled = false,
-    Radius = 18,
-    NumSides = 48,
-    Thickness = 2.8,
-    Color = fov.color,
-    Transparency = 1,
-    ZIndex = 15,
-})
-
-local fov_focus_outer = newdrawing(fov_marker, "Circle", {
-    Filled = false,
-    Radius = 23,
-    NumSides = 48,
-    Thickness = 1.7,
-    Color = fov.accent,
-    Transparency = 0.98,
-    ZIndex = 14,
-})
+    for j = 1, 8 do
+        local drawing = line(fov_marker, 1.9, i % 2 == 0 and fov.accent or fov.color, 1)
+        set(drawing, "ZIndex", 15)
+        corner[j] = drawing
+    end
+end
 
 local fov_trace_back = line(fov_trace, 9, fov_backdrop, 0.97)
 local fov_trace_middle = line(fov_trace, 5.5, fov.accent, 1)
@@ -1446,20 +1402,23 @@ local update_fov_marker = function(camera, part, dt, phase)
 
     local center = fov_marker_position
     local pulse = fov.animation == "Pulse" or fov.animation == "Both"
-    local size = 16 + (pulse and math.sin(phase * 3) * 1.1 or 0)
-    set(fov_dot_back, "Position", center)
-    set(fov_dot_mid, "Position", center)
-    set(fov_dot_mid, "Color", fov.accent)
-    set(fov_dot, "Position", center)
-    set(fov_dot, "Color", fov.color)
-    set(fov_focus_back, "Position", center)
-    set(fov_focus_back, "Radius", size + 3)
-    set(fov_focus, "Position", center)
-    set(fov_focus, "Radius", size + 3)
-    set(fov_focus, "Color", fov.color)
-    set(fov_focus_outer, "Position", center)
-    set(fov_focus_outer, "Radius", size + 8)
-    set(fov_focus_outer, "Color", fov.accent)
+    local radius = 17 + (pulse and math.sin(phase * 3) * 0.8 or 0)
+    local arc = math.rad(42)
+
+    for i, corner in fov_corners do
+        local middle = math.pi * 0.25 + (i - 1) * math.pi * 0.5
+        local color = i % 2 == 0 and fov.accent or fov.color
+        local step = arc / #corner
+        local first = middle - arc * 0.5
+
+        for j, drawing in corner do
+            local a = first + (j - 1) * step
+            local b = a + step
+            set(drawing, "From", center + Vector2.new(math.cos(a), math.sin(a)) * radius)
+            set(drawing, "To", center + Vector2.new(math.cos(b), math.sin(b)) * radius)
+            set(drawing, "Color", color)
+        end
+    end
 
     show(fov_marker, true)
     return center

@@ -1,4 +1,4 @@
--- Sixly ESP v6
+-- Sixly ESP v7
 local players = game:GetService("Players")
 local runservice = game:GetService("RunService")
 local localplayer = players.LocalPlayer
@@ -1159,10 +1159,11 @@ end
 esp.fov = {
     enabled = false,
     marker = true,
+    line = true,
     radius = 150,
     thickness = 1,
-    color = Color3.fromRGB(68, 64, 57),
-    accent = Color3.fromRGB(245, 67, 103),
+    color = palette.primary,
+    accent = palette.primary,
     animation = "Both",
     speed = 0.65,
     teamcheck = true,
@@ -1173,6 +1174,7 @@ esp.fov = {
 local fov = esp.fov
 local fov_ring = { visible = false }
 local fov_marker = { visible = false }
+local fov_trace = { visible = false }
 local fov_outer, fov_inner, fov_brackets = {}, {}, {}
 local fov_sources = {}
 local fov_priority = {"SilentAim", "Aimbot", "Default"}
@@ -1224,6 +1226,10 @@ local fov_badge_right = newdrawing(fov_marker, "Circle", {
     Color = fov.accent, Transparency = 1, ZIndex = 8,
 })
 local fov_label = text(fov_marker, 11, Color3.fromRGB(32, 24, 30))
+local fov_trace_back = line(fov_trace, 2, fov.color, 0.3)
+local fov_trace_front = line(fov_trace, 1, fov.accent, 0.85)
+set(fov_trace_back, "ZIndex", 5)
+set(fov_trace_front, "ZIndex", 6)
 set(fov_badge, "ZIndex", 8)
 set(fov_label, "ZIndex", 9)
 set(fov_label, "Outline", false)
@@ -1231,6 +1237,7 @@ set(fov_label, "Outline", false)
 local hide_fov = function()
     show(fov_ring, false)
     show(fov_marker, false)
+    show(fov_trace, false)
     fov_last_target = nil
     fov_marker_position = nil
 end
@@ -1391,7 +1398,8 @@ local update_fov_marker = function(camera, part, dt, phase)
     if not position then
         show(fov_marker, false)
         fov_last_target = nil
-        return
+        fov_marker_position = nil
+        return nil
     end
 
     if part ~= fov_last_target then
@@ -1445,6 +1453,37 @@ local update_fov_marker = function(camera, part, dt, phase)
     set(fov_label, "Position", Vector2.new(x, badge_y))
 
     show(fov_marker, true)
+    return center
+end
+
+local update_fov_trace = function(camera, position, phase)
+    if not fov.line or not position then
+        show(fov_trace, false)
+        return
+    end
+
+    local origin = Vector2.new(
+        camera.ViewportSize.X * 0.5 * projectionScale.X + esp.offset.X,
+        camera.ViewportSize.Y * 0.5 * projectionScale.Y + esp.offset.Y
+    )
+    local delta = position - origin
+    local distance = delta.Magnitude
+    if distance <= 22 then
+        show(fov_trace, false)
+        return
+    end
+
+    local direction = delta / distance
+    local from = origin + direction * 7
+    local to = position - direction * 15
+    set(fov_trace_back, "From", from)
+    set(fov_trace_back, "To", to)
+    set(fov_trace_back, "Color", fov.color)
+    set(fov_trace_front, "From", from)
+    set(fov_trace_front, "To", to)
+    set(fov_trace_front, "Color", fov.accent)
+    set(fov_trace_front, "Transparency", 0.73 + math.sin(phase * 3) * 0.12)
+    show(fov_trace, true)
 end
 
 local update_fov = function(camera, dt)
@@ -1467,16 +1506,18 @@ local update_fov = function(camera, dt)
     update_fov_ring(camera, radius, angle, target ~= nil)
 
     if target then
-        update_fov_marker(camera, target, dt, fov_phase)
+        local position = update_fov_marker(camera, target, dt, fov_phase)
+        update_fov_trace(camera, position, fov_phase)
     else
         show(fov_marker, false)
+        show(fov_trace, false)
         fov_last_target = nil
         fov_marker_position = nil
     end
 end
 
 local destroy_fov = function()
-    for _, group in {fov_ring, fov_marker} do
+    for _, group in {fov_ring, fov_marker, fov_trace} do
         for _, drawing in group do
             pcall(function()
                 drawing.object:Remove()
@@ -1526,7 +1567,15 @@ end
 
 esp.set_fov_marker = function(self, value)
     self.fov.marker = value == true
-    if not self.fov.marker then show(fov_marker, false) end
+    if not self.fov.marker then
+        show(fov_marker, false)
+        show(fov_trace, false)
+    end
+end
+
+esp.set_fov_line = function(self, value)
+    self.fov.line = value == true
+    if not self.fov.line then show(fov_trace, false) end
 end
 
 esp.set_fov_teamcheck = function(self, value)

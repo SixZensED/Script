@@ -1,4 +1,4 @@
--- Sixly ESP v7.1
+-- Sixly ESP v6
 local players = game:GetService("Players")
 local runservice = game:GetService("RunService")
 local localplayer = players.LocalPlayer
@@ -1176,8 +1176,8 @@ local fov = esp.fov
 local fov_ring = { visible = false }
 local fov_marker = { visible = false }
 local fov_trace = { visible = false }
-local fov_outer, fov_inner, fov_brackets = {}, {}, {}
-local fov_outer_backs, fov_bracket_backs = {}, {}
+local fov_outer, fov_inner = {}, {}
+local fov_outer_backs = {}
 local fov_sources = {}
 local fov_priority = {"SilentAim", "Aimbot", "Default"}
 local fov_phase = 0
@@ -1200,74 +1200,71 @@ for i = 1, 18 do
     set(fov_inner[i], "ZIndex", 6)
 end
 
-for i = 1, 8 do
-    fov_bracket_backs[i] = line(fov_marker, 4, palette.outline, 0.82)
-    fov_brackets[i] = line(fov_marker, 2.2, fov.color, 1)
-    set(fov_bracket_backs[i], "ZIndex", 12)
-    set(fov_brackets[i], "ZIndex", 13)
-end
+local fov_backdrop = Color3.fromRGB(10, 8, 19)
 
 local fov_dot_back = newdrawing(fov_marker, "Circle", {
     Filled = true,
-    Radius = 3.8,
-    NumSides = 20,
+    Radius = 6,
+    NumSides = 24,
+    Color = fov_backdrop,
+    Transparency = 1,
+    ZIndex = 17,
+})
+
+local fov_dot_mid = newdrawing(fov_marker, "Circle", {
+    Filled = true,
+    Radius = 4.2,
+    NumSides = 24,
     Color = fov.accent,
     Transparency = 1,
-    ZIndex = 15,
+    ZIndex = 18,
 })
 
 local fov_dot = newdrawing(fov_marker, "Circle", {
     Filled = true,
-    Radius = 2,
-    NumSides = 16,
+    Radius = 2.3,
+    NumSides = 24,
     Color = fov.color,
     Transparency = 1,
-    ZIndex = 16,
+    ZIndex = 19,
 })
 
 local fov_focus_back = newdrawing(fov_marker, "Circle", {
     Filled = false,
-    Radius = 11,
-    NumSides = 32,
-    Thickness = 3.5,
-    Color = palette.outline,
-    Transparency = 0.6,
+    Radius = 18,
+    NumSides = 48,
+    Thickness = 5.2,
+    Color = fov_backdrop,
+    Transparency = 0.96,
     ZIndex = 12,
 })
 
 local fov_focus = newdrawing(fov_marker, "Circle", {
     Filled = false,
-    Radius = 11,
-    NumSides = 32,
+    Radius = 18,
+    NumSides = 48,
+    Thickness = 2.8,
+    Color = fov.color,
+    Transparency = 1,
+    ZIndex = 15,
+})
+
+local fov_focus_outer = newdrawing(fov_marker, "Circle", {
+    Filled = false,
+    Radius = 23,
+    NumSides = 48,
     Thickness = 1.7,
     Color = fov.accent,
-    Transparency = 1,
+    Transparency = 0.98,
     ZIndex = 14,
 })
 
-local fov_badge = square(fov_marker, true, 1, fov.accent)
-local fov_badge_left = newdrawing(fov_marker, "Circle", {
-    Filled = true, Radius = 8, NumSides = 20,
-    Color = fov.accent, Transparency = 1, ZIndex = 8,
-})
-local fov_badge_right = newdrawing(fov_marker, "Circle", {
-    Filled = true, Radius = 8, NumSides = 20,
-    Color = fov.accent, Transparency = 1, ZIndex = 8,
-})
-local fov_label = text(fov_marker, 11, fov.color)
-local fov_trace_back = line(fov_trace, 4, palette.outline, 0.8)
-local fov_trace_middle = line(fov_trace, 2.6, fov.color, 0.96)
-local fov_trace_front = line(fov_trace, 1.2, fov.accent, 0.96)
+local fov_trace_back = line(fov_trace, 9, fov_backdrop, 0.97)
+local fov_trace_middle = line(fov_trace, 5.5, fov.accent, 1)
+local fov_trace_front = line(fov_trace, 2.8, fov.color, 1)
 set(fov_trace_back, "ZIndex", 9)
 set(fov_trace_middle, "ZIndex", 10)
 set(fov_trace_front, "ZIndex", 11)
-set(fov_badge, "ZIndex", 17)
-set(fov_badge_left, "ZIndex", 17)
-set(fov_badge_right, "ZIndex", 17)
-set(fov_label, "ZIndex", 18)
-set(fov_label, "Outline", true)
-set(fov_label, "OutlineColor", palette.outline)
-
 local hide_fov = function()
     show(fov_ring, false)
     show(fov_marker, false)
@@ -1449,54 +1446,20 @@ local update_fov_marker = function(camera, part, dt, phase)
 
     local center = fov_marker_position
     local pulse = fov.animation == "Pulse" or fov.animation == "Both"
-    local size = 10 + (pulse and math.sin(phase * 3) * 1.2 or 0)
-    local length = 5
-    local x, y = center.X, center.Y
-    local draw_corner = function(index, x1, y1, x2, y2)
-        local from = Vector2.new(x1, y1)
-        local to = Vector2.new(x2, y2)
-        set(fov_bracket_backs[index], "From", from)
-        set(fov_bracket_backs[index], "To", to)
-        set(fov_brackets[index], "From", from)
-        set(fov_brackets[index], "To", to)
-        set(fov_brackets[index], "Color", index % 4 <= 1 and fov.accent or fov.color)
-    end
-
-    draw_corner(1, x - size, y - size + length, x - size, y - size)
-    draw_corner(2, x - size, y - size, x - size + length, y - size)
-    draw_corner(3, x + size - length, y - size, x + size, y - size)
-    draw_corner(4, x + size, y - size, x + size, y - size + length)
-    draw_corner(5, x - size, y + size - length, x - size, y + size)
-    draw_corner(6, x - size, y + size, x - size + length, y + size)
-    draw_corner(7, x + size - length, y + size, x + size, y + size)
-    draw_corner(8, x + size, y + size - length, x + size, y + size)
-
+    local size = 16 + (pulse and math.sin(phase * 3) * 1.1 or 0)
     set(fov_dot_back, "Position", center)
-    set(fov_dot_back, "Color", fov.accent)
+    set(fov_dot_mid, "Position", center)
+    set(fov_dot_mid, "Color", fov.accent)
     set(fov_dot, "Position", center)
     set(fov_dot, "Color", fov.color)
     set(fov_focus_back, "Position", center)
     set(fov_focus_back, "Radius", size + 3)
     set(fov_focus, "Position", center)
     set(fov_focus, "Radius", size + 3)
-    set(fov_focus, "Color", fov.accent)
-
-    local player = players:GetPlayerFromCharacter(part.Parent)
-    local name = (player and player.Name) or part.Parent.Name
-    name = tostring(name):sub(1, 14)
-
-    local width = math.clamp(#name * 6 + 14, 30, 108)
-    local badge_y = y + size + 7
-    set(fov_badge, "Position", Vector2.new(x - width * 0.5 + 8, badge_y))
-    set(fov_badge, "Size", Vector2.new(width - 16, 16))
-    set(fov_badge, "Color", fov.accent)
-    set(fov_badge_left, "Position", Vector2.new(x - width * 0.5 + 8, badge_y + 8))
-    set(fov_badge_left, "Color", fov.accent)
-    set(fov_badge_right, "Position", Vector2.new(x + width * 0.5 - 8, badge_y + 8))
-    set(fov_badge_right, "Color", fov.accent)
-    set(fov_label, "Text", name)
-    set(fov_label, "Color", fov.color)
-    set(fov_label, "Position", Vector2.new(x, badge_y))
+    set(fov_focus, "Color", fov.color)
+    set(fov_focus_outer, "Position", center)
+    set(fov_focus_outer, "Radius", size + 8)
+    set(fov_focus_outer, "Color", fov.accent)
 
     show(fov_marker, true)
     return center
@@ -1514,23 +1477,22 @@ local update_fov_trace = function(camera, position, phase)
     )
     local delta = position - origin
     local distance = delta.Magnitude
-    if distance <= 22 then
+    if distance <= 32 then
         show(fov_trace, false)
         return
     end
 
     local direction = delta / distance
-    local from = origin + direction * 7
-    local to = position - direction * 15
+    local from = origin + direction * 11
+    local to = position - direction * 22
     set(fov_trace_back, "From", from)
     set(fov_trace_back, "To", to)
     set(fov_trace_middle, "From", from)
     set(fov_trace_middle, "To", to)
-    set(fov_trace_middle, "Color", fov.color)
+    set(fov_trace_middle, "Color", fov.accent)
     set(fov_trace_front, "From", from)
     set(fov_trace_front, "To", to)
-    set(fov_trace_front, "Color", fov.accent)
-    set(fov_trace_front, "Transparency", 0.88 + math.sin(phase * 3) * 0.1)
+    set(fov_trace_front, "Color", fov.color)
     show(fov_trace, true)
 end
 

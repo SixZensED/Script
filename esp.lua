@@ -1,4 +1,4 @@
--- Sixly ESP v7
+-- Sixly ESP v7.1
 local players = game:GetService("Players")
 local runservice = game:GetService("RunService")
 local localplayer = players.LocalPlayer
@@ -298,6 +298,7 @@ end
 local newdrawing = function(group, kind, properties)
     local drawing = {
         object = Drawing.new(kind),
+        kind = kind,
         state = {},
     }
 
@@ -1162,7 +1163,7 @@ esp.fov = {
     line = true,
     radius = 150,
     thickness = 1,
-    color = palette.primary,
+    color = Color3.fromRGB(250, 250, 255),
     accent = palette.primary,
     animation = "Both",
     speed = 0.65,
@@ -1176,6 +1177,7 @@ local fov_ring = { visible = false }
 local fov_marker = { visible = false }
 local fov_trace = { visible = false }
 local fov_outer, fov_inner, fov_brackets = {}, {}, {}
+local fov_outer_backs, fov_bracket_backs = {}, {}
 local fov_sources = {}
 local fov_priority = {"SilentAim", "Aimbot", "Default"}
 local fov_phase = 0
@@ -1184,36 +1186,63 @@ local fov_auto_target
 local fov_next_scan = 0
 local fov_last_target
 local fov_marker_position
+local fov_last_visibility_check = -math.huge
 
 for i = 1, 36 do
-    fov_outer[i] = line(fov_ring, 1, fov.color, 0.85)
+    fov_outer_backs[i] = line(fov_ring, 3.5, palette.outline, 0.55)
+    fov_outer[i] = line(fov_ring, 1.8, fov.color, 1)
+    set(fov_outer_backs[i], "ZIndex", 5)
+    set(fov_outer[i], "ZIndex", 6)
 end
 
 for i = 1, 18 do
-    fov_inner[i] = line(fov_ring, 1, fov.color, 0.38)
+    fov_inner[i] = line(fov_ring, 1, fov.accent, 0.62)
+    set(fov_inner[i], "ZIndex", 6)
 end
 
 for i = 1, 8 do
-    fov_brackets[i] = line(fov_marker, 2, fov.accent, 1)
+    fov_bracket_backs[i] = line(fov_marker, 4, palette.outline, 0.82)
+    fov_brackets[i] = line(fov_marker, 2.2, fov.color, 1)
+    set(fov_bracket_backs[i], "ZIndex", 12)
+    set(fov_brackets[i], "ZIndex", 13)
 end
+
+local fov_dot_back = newdrawing(fov_marker, "Circle", {
+    Filled = true,
+    Radius = 3.8,
+    NumSides = 20,
+    Color = fov.accent,
+    Transparency = 1,
+    ZIndex = 15,
+})
 
 local fov_dot = newdrawing(fov_marker, "Circle", {
     Filled = true,
     Radius = 2,
     NumSides = 16,
-    Color = fov.accent,
+    Color = fov.color,
     Transparency = 1,
-    ZIndex = 8,
+    ZIndex = 16,
+})
+
+local fov_focus_back = newdrawing(fov_marker, "Circle", {
+    Filled = false,
+    Radius = 11,
+    NumSides = 32,
+    Thickness = 3.5,
+    Color = palette.outline,
+    Transparency = 0.6,
+    ZIndex = 12,
 })
 
 local fov_focus = newdrawing(fov_marker, "Circle", {
     Filled = false,
     Radius = 11,
     NumSides = 32,
-    Thickness = 1.5,
+    Thickness = 1.7,
     Color = fov.accent,
-    Transparency = 0.85,
-    ZIndex = 7,
+    Transparency = 1,
+    ZIndex = 14,
 })
 
 local fov_badge = square(fov_marker, true, 1, fov.accent)
@@ -1225,14 +1254,19 @@ local fov_badge_right = newdrawing(fov_marker, "Circle", {
     Filled = true, Radius = 8, NumSides = 20,
     Color = fov.accent, Transparency = 1, ZIndex = 8,
 })
-local fov_label = text(fov_marker, 11, Color3.fromRGB(32, 24, 30))
-local fov_trace_back = line(fov_trace, 2, fov.color, 0.3)
-local fov_trace_front = line(fov_trace, 1, fov.accent, 0.85)
-set(fov_trace_back, "ZIndex", 5)
-set(fov_trace_front, "ZIndex", 6)
-set(fov_badge, "ZIndex", 8)
-set(fov_label, "ZIndex", 9)
-set(fov_label, "Outline", false)
+local fov_label = text(fov_marker, 11, fov.color)
+local fov_trace_back = line(fov_trace, 4, palette.outline, 0.8)
+local fov_trace_middle = line(fov_trace, 2.6, fov.color, 0.96)
+local fov_trace_front = line(fov_trace, 1.2, fov.accent, 0.96)
+set(fov_trace_back, "ZIndex", 9)
+set(fov_trace_middle, "ZIndex", 10)
+set(fov_trace_front, "ZIndex", 11)
+set(fov_badge, "ZIndex", 17)
+set(fov_badge_left, "ZIndex", 17)
+set(fov_badge_right, "ZIndex", 17)
+set(fov_label, "ZIndex", 18)
+set(fov_label, "Outline", true)
+set(fov_label, "OutlineColor", palette.outline)
 
 local hide_fov = function()
     show(fov_ring, false)
@@ -1363,7 +1397,7 @@ local update_fov_ring = function(camera, radius, angle, acquired)
         camera.ViewportSize.Y * 0.5 * projectionScale.Y + esp.offset.Y
     )
 
-    local draw_arc = function(drawing, a, b, r, color, alpha)
+    local draw_arc = function(drawing, a, b, r, color, alpha, thickness)
         set(drawing, "From", center + Vector2.new(
             math.cos(a) * r * projectionScale.X,
             math.sin(a) * r * projectionScale.Y
@@ -1372,22 +1406,25 @@ local update_fov_ring = function(camera, radius, angle, acquired)
             math.cos(b) * r * projectionScale.X,
             math.sin(b) * r * projectionScale.Y
         ))
-        set(drawing, "Thickness", fov.thickness)
+        set(drawing, "Thickness", thickness)
         set(drawing, "Color", color)
         set(drawing, "Transparency", alpha)
     end
 
-    local outer_color = acquired and fov.color:Lerp(fov.accent, 0.25) or fov.color
     local step = math.pi * 2 / #fov_outer
     for i, drawing in fov_outer do
         local a = (i - 1) * step + angle
-        draw_arc(drawing, a, a + step * 0.57, radius, outer_color, i % 4 == 0 and 0.55 or 0.88)
+        local b = a + step * 0.57
+        local color = i % 3 == 0 and fov.accent or fov.color
+        draw_arc(fov_outer_backs[i], a, b, radius, palette.outline, 0.62, fov.thickness + 2.1)
+        draw_arc(drawing, a, b, radius, color, acquired and 1 or 0.93, fov.thickness + 0.6)
     end
 
     local inner_step = math.pi * 2 / #fov_inner
     for i, drawing in fov_inner do
         local a = (i - 1) * inner_step - angle * 0.45
-        draw_arc(drawing, a, a + inner_step * 0.36, radius - 4, fov.color, 0.34)
+        draw_arc(drawing, a, a + inner_step * 0.36, math.max(1, radius - 4),
+            i % 2 == 0 and fov.color or fov.accent, 0.75, math.max(1, fov.thickness * 0.85))
     end
 
     show(fov_ring, true)
@@ -1415,23 +1452,31 @@ local update_fov_marker = function(camera, part, dt, phase)
     local size = 10 + (pulse and math.sin(phase * 3) * 1.2 or 0)
     local length = 5
     local x, y = center.X, center.Y
-    local draw_corner = function(drawing, x1, y1, x2, y2)
-        set(drawing, "From", Vector2.new(x1, y1))
-        set(drawing, "To", Vector2.new(x2, y2))
-        set(drawing, "Color", fov.accent)
+    local draw_corner = function(index, x1, y1, x2, y2)
+        local from = Vector2.new(x1, y1)
+        local to = Vector2.new(x2, y2)
+        set(fov_bracket_backs[index], "From", from)
+        set(fov_bracket_backs[index], "To", to)
+        set(fov_brackets[index], "From", from)
+        set(fov_brackets[index], "To", to)
+        set(fov_brackets[index], "Color", index % 4 <= 1 and fov.accent or fov.color)
     end
 
-    draw_corner(fov_brackets[1], x - size, y - size + length, x - size, y - size)
-    draw_corner(fov_brackets[2], x - size, y - size, x - size + length, y - size)
-    draw_corner(fov_brackets[3], x + size - length, y - size, x + size, y - size)
-    draw_corner(fov_brackets[4], x + size, y - size, x + size, y - size + length)
-    draw_corner(fov_brackets[5], x - size, y + size - length, x - size, y + size)
-    draw_corner(fov_brackets[6], x - size, y + size, x - size + length, y + size)
-    draw_corner(fov_brackets[7], x + size - length, y + size, x + size, y + size)
-    draw_corner(fov_brackets[8], x + size, y + size - length, x + size, y + size)
+    draw_corner(1, x - size, y - size + length, x - size, y - size)
+    draw_corner(2, x - size, y - size, x - size + length, y - size)
+    draw_corner(3, x + size - length, y - size, x + size, y - size)
+    draw_corner(4, x + size, y - size, x + size, y - size + length)
+    draw_corner(5, x - size, y + size - length, x - size, y + size)
+    draw_corner(6, x - size, y + size, x - size + length, y + size)
+    draw_corner(7, x + size - length, y + size, x + size, y + size)
+    draw_corner(8, x + size, y + size - length, x + size, y + size)
 
+    set(fov_dot_back, "Position", center)
+    set(fov_dot_back, "Color", fov.accent)
     set(fov_dot, "Position", center)
-    set(fov_dot, "Color", fov.accent)
+    set(fov_dot, "Color", fov.color)
+    set(fov_focus_back, "Position", center)
+    set(fov_focus_back, "Radius", size + 3)
     set(fov_focus, "Position", center)
     set(fov_focus, "Radius", size + 3)
     set(fov_focus, "Color", fov.accent)
@@ -1450,6 +1495,7 @@ local update_fov_marker = function(camera, part, dt, phase)
     set(fov_badge_right, "Position", Vector2.new(x + width * 0.5 - 8, badge_y + 8))
     set(fov_badge_right, "Color", fov.accent)
     set(fov_label, "Text", name)
+    set(fov_label, "Color", fov.color)
     set(fov_label, "Position", Vector2.new(x, badge_y))
 
     show(fov_marker, true)
@@ -1478,12 +1524,43 @@ local update_fov_trace = function(camera, position, phase)
     local to = position - direction * 15
     set(fov_trace_back, "From", from)
     set(fov_trace_back, "To", to)
-    set(fov_trace_back, "Color", fov.color)
+    set(fov_trace_middle, "From", from)
+    set(fov_trace_middle, "To", to)
+    set(fov_trace_middle, "Color", fov.color)
     set(fov_trace_front, "From", from)
     set(fov_trace_front, "To", to)
     set(fov_trace_front, "Color", fov.accent)
-    set(fov_trace_front, "Transparency", 0.73 + math.sin(phase * 3) * 0.12)
+    set(fov_trace_front, "Transparency", 0.88 + math.sin(phase * 3) * 0.1)
     show(fov_trace, true)
+end
+
+local refresh_fov_drawings = function()
+    local now = os.clock()
+    if now - fov_last_visibility_check < 0.7 then return end
+    fov_last_visibility_check = now
+
+    for _, group in {fov_ring, fov_marker, fov_trace} do
+        if not group.visible then continue end
+        for _, drawing in group do
+            local ok, visible = pcall(function()
+                return drawing.object.Visible
+            end)
+            if not ok then
+                local state = drawing.state
+                local created, object = pcall(Drawing.new, drawing.kind)
+                if created then
+                    drawing.object = object
+                    drawing.state = {}
+                    for key, value in state do
+                        set(drawing, key, value)
+                    end
+                end
+            elseif not visible then
+                drawing.state.Visible = false
+                set(drawing, "Visible", true)
+            end
+        end
+    end
 end
 
 local update_fov = function(camera, dt)
@@ -1497,23 +1574,52 @@ local update_fov = function(camera, dt)
     fov_phase = (fov_phase + dt * speed) % (math.pi * 2)
     fov_rotation = (fov_rotation + dt * speed * 0.32) % (math.pi * 2)
 
-    local target = fov.marker and get_fov_selected(camera) or nil
     local rotate = fov.animation == "Rotate" or fov.animation == "Both"
     local pulse = fov.animation == "Pulse" or fov.animation == "Both"
     local angle = rotate and fov_rotation or 0
     local radius = fov.radius + (pulse and math.sin(fov_phase * 3) * 1.8 or 0)
 
-    update_fov_ring(camera, radius, angle, target ~= nil)
+    refresh_fov_drawings()
+    update_fov_ring(camera, radius, angle, false)
+
+    if not fov.marker then
+        show(fov_marker, false)
+        show(fov_trace, false)
+        refresh_fov_drawings()
+        return
+    end
+
+    local ok, target = pcall(get_fov_selected, camera)
+    if not ok then
+        fov_auto_target = nil
+        fov_next_scan = 0
+        report("fov_target", target)
+        target = nil
+    end
 
     if target then
-        local position = update_fov_marker(camera, target, dt, fov_phase)
-        update_fov_trace(camera, position, fov_phase)
+        local success, position = pcall(update_fov_marker, camera, target, dt, fov_phase)
+        if success then
+            local line_ok, line_error = pcall(update_fov_trace, camera, position, fov_phase)
+            if not line_ok then
+                show(fov_trace, false)
+                report("fov_line", line_error)
+            end
+        else
+            show(fov_marker, false)
+            show(fov_trace, false)
+            fov_last_target = nil
+            fov_marker_position = nil
+            report("fov_marker", position)
+        end
     else
         show(fov_marker, false)
         show(fov_trace, false)
         fov_last_target = nil
         fov_marker_position = nil
     end
+
+    refresh_fov_drawings()
 end
 
 local destroy_fov = function()
@@ -1827,7 +1933,6 @@ runservice:BindToRenderStep(rendername, Enum.RenderPriority.Camera.Value + 1, fu
         projection(camera)
         local ok, message = pcall(update_fov, camera, dt)
         if not ok then
-            hide_fov()
             report("fov", message)
         end
     else
